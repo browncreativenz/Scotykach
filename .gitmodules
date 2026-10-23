@@ -1,0 +1,8 @@
+[submodule "external/spotykach"]
+	path = external/spotykach
+	url = https://github.com/Synthux-Academy/spotykach.git
+	shallow = true
+[submodule "external/DaisySP"]
+	path = external/DaisySP
+	url = https://github.com/electro-smith/DaisySP.git
+	shallow = true

@@ -1,0 +1,73 @@
+name: Build
+
+on:
+  push:
+    branches: [main, 'ccr-*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine-linux:
+    name: Engine tests (Linux, ${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC
+            cc: gcc
+            cxx: g++
+            flags: ""
+          - name: Clang
+            cc: clang
+            cxx: clang++
+            flags: ""
+          - name: sanitizers
+            cc: gcc
+            cxx: g++
+            flags: "-DCMAKE_BUILD_TYPE=RelWithDebInfo -DSCOTYKACH_SANITIZE=ON"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true   # external/spotykach and external/DaisySP; the firmware's own submodules aren't needed
+
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.flags }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --parallel 4
+
+  engine-macos:
+    name: Engine tests (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel "$(sysctl -n hw.ncpu)"
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --parallel 4
+
+      - name: Demo render
+        run: mkdir -p dist && build/scotykach_render dist/scotykach-demo.wav
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Scotykach-demo
+          path: dist/scotykach-demo.wav

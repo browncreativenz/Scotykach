@@ -1,0 +1,16 @@
+diff --git a/src/core/panner.h b/src/core/panner.h
+index 086b26a..f87df9c 100644
+--- a/src/core/panner.h
++++ b/src/core/panner.h
+@@ -66,7 +66,10 @@ private:
+ 
+     std::bitset<2> _pending_step;
+ 
+-    std::random_device _rand;
++    // Desktop (Scotykach): std::random_device reads the operating system's
++    // entropy on a desktop, so every render panned differently. A
++    // default-seeded engine makes renders, and exports from Live, repeat.
++    std::mt19937 _rand;
+     std::uniform_real_distribution<float> _dice;
+ 
+     float _sample_rate;

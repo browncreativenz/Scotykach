@@ -1,0 +1,16 @@
+diff --git a/src/core/generator.cpp b/src/core/generator.cpp
+index f552ec9..b88c7db 100644
+--- a/src/core/generator.cpp
++++ b/src/core/generator.cpp
+@@ -141,7 +141,10 @@ void Generator::apply_dimensions()
+   else if (_snap_to_cue) { /* slice mode */
+     _cue_size_delta = static_cast<uint8_t>(std::max(abs_size / _slice_size, 1.f));
+     auto start_idx = static_cast<uint32_t>(std::round(norm_start * _auto_cue_max_idx) + _offset);
+-    start_idx %= (_auto_cue_max_idx + 1);
++    // Desktop (Scotykach): with nothing recorded, auto_cue() was given no
++    // slices, so this is % 0. The Cortex-M7 doesn't trap on that (x % 0 is
++    // x); x86 does. arm_mod (shim/prelude.h) gives the module's result.
++    start_idx = arm_mod(start_idx, _auto_cue_max_idx + 1);
+     abs_start = _slice_size * start_idx;
+     if (!_alt_size) {
+       // Snap size to 1/8th by default, except for min and max where it snaps to 1/16th.

@@ -1,0 +1,16 @@
+diff --git a/src/core/fx/fx.flux.cpp b/src/core/fx/fx.flux.cpp
+index 2e59d6f..613c490 100644
+--- a/src/core/fx/fx.flux.cpp
++++ b/src/core/fx/fx.flux.cpp
+@@ -79,7 +79,10 @@ void Flux::_apply_mix()
+ 
+ void Flux::switch_mode()
+ {
+-    auto mode_count = 3;
++    // Desktop (Scotykach): constexpr, so modes is a plain array; Clang rejects
++    // an initialised variable-length array (a GCC extension). Same contents:
++    // the third element is zero, FreeDelay.
++    constexpr auto mode_count = 3;
+     Mode modes[mode_count] = { Mode::FreeDelay, Mode::ClockedDelay };
+     for (auto i = 0; i < mode_count; i++) {
+         if (_mode == modes[i]) {

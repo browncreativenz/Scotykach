@@ -1,0 +1,72 @@
+diff --git a/src/core/core.cpp b/src/core/core.cpp
+index af006b2..cd383b2 100644
+--- a/src/core/core.cpp
++++ b/src/core/core.cpp
+@@ -25,22 +25,33 @@ void Core::init(const float sample_rate, const float callback_buffer_size) {
+     auto& pool = SDRAMBuffer::pool();
+     auto size = pool.sourceBufferSize(); 
+ 
+-    static Buffer::Frame* main_buf[Deck::Count] = { pool.sourceBuffer(), pool.sourceBuffer() };
+-
+-    static float* detect_buf[Deck::Count][2] = {
+-        { pool.detectorBuffer(), pool.detectorBuffer() },
+-        { pool.detectorBuffer(), pool.detectorBuffer() }
+-    };
+-    static float* delay_buf[Deck::Count][2] = {
+-        { pool.delayBuffer(), pool.delayBuffer() },
+-        { pool.delayBuffer(), pool.delayBuffer() }
+-    };
+-    static size_t* slice_buf[Deck::Count] = { 
+-        pool.slices_a(), pool.slices_b() 
+-    }; 
+-    static Event* track_buf[Deck::Count] = { 
+-        pool.track_buffer_a(), pool.track_buffer_b() 
+-    };
++    // Desktop (Scotykach): these tables were function statics, so a second
++    // Core in the same process would have shared the first one's buffers, and
++    // Detector keeps its table's address. They are members now; the pool is
++    // asked in the same order as before.
++    auto& main_buf = _main_buf;
++    main_buf[0] = pool.sourceBuffer();
++    main_buf[1] = pool.sourceBuffer();
++
++    auto& detect_buf = _detect_buf;
++    detect_buf[0][0] = pool.detectorBuffer();
++    detect_buf[0][1] = pool.detectorBuffer();
++    detect_buf[1][0] = pool.detectorBuffer();
++    detect_buf[1][1] = pool.detectorBuffer();
++
++    auto& delay_buf = _delay_buf;
++    delay_buf[0][0] = pool.delayBuffer();
++    delay_buf[0][1] = pool.delayBuffer();
++    delay_buf[1][0] = pool.delayBuffer();
++    delay_buf[1][1] = pool.delayBuffer();
++
++    auto& slice_buf = _slice_buf;
++    slice_buf[0] = pool.slices_a();
++    slice_buf[1] = pool.slices_b();
++
++    auto& track_buf = _track_buf;
++    track_buf[0] = pool.track_buffer_a();
++    track_buf[1] = pool.track_buffer_b();
+ 
+     for (auto d = 0; d < Deck::Count; d++) {
+         auto ref = (Deck::Ref)d;
+diff --git a/src/core/core.h b/src/core/core.h
+index 1e96f7a..6e935a4 100644
+--- a/src/core/core.h
++++ b/src/core/core.h
+@@ -81,6 +81,13 @@ private:
+   float _click_mix;
+   float _mix;
+   float _mix_mod;
++
++  // Desktop (Scotykach): buffer tables, one set per instance (see init).
++  Buffer::Frame* _main_buf[Deck::Count];
++  float* _detect_buf[Deck::Count][2];
++  float* _delay_buf[Deck::Count][2];
++  size_t* _slice_buf[Deck::Count];
++  Event* _track_buf[Deck::Count];
+ };
+ 
+ };
