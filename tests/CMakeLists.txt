@@ -56,3 +56,19 @@ file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/dumps")
 add_test(NAME scenario_list COMMAND scenario_dump --list)
 string(REPLACE ";" "\n" scenario_lines "${SCENARIOS}")
 set_tests_properties(scenario_list PROPERTIES PASS_REGULAR_EXPRESSION "^${scenario_lines}\n$")
+
+# The host-facing processor: rates, block sizes, Live's clock, parameters.
+scotykach_test(processor_test processor_test.cpp)
+add_test(NAME processor COMMAND processor_test)
+
+# Sample-rate conversion around the 48 kHz module (copied from Capicola).
+scotykach_test(resampler_test resampler_test.cpp)
+add_test(NAME resampler COMMAND resampler_test)
+
+# The whole firmware (engine and UI) against the engine alone; LEDs, gates.
+scotykach_test(module_test module_test.cpp)
+add_test(NAME module COMMAND module_test)
+
+# The parameter table against the booted firmware.
+scotykach_test(params_test params_test.cpp)
+add_test(NAME params COMMAND params_test)

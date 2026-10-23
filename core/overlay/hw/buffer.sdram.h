@@ -8,8 +8,8 @@
  * About 32 MB: two 42 s stereo source buffers (the firmware's third, for
  * undo, is not used by v1.3.1), plus the delay and detector lines.
  *
- * The firmware's include, "hw/buffer.sdram.h", finds this file because the
- * shim directory comes first on the include path.
+ * The build writes this file over the firmware copy's hw/buffer.sdram.h
+ * (see cmake/Firmware.cmake), so every include of it finds this one.
  */
 
 #pragma once
@@ -25,6 +25,7 @@
 #include "core/event.h"
 #include "core/fx/fx.h"
 #include "core/track.h"
+#include "hw/card.h"
 #include "nocopy.h"
 
 namespace spotykach {
@@ -65,6 +66,8 @@ public:
     size_t* slices_a() const;
     size_t* slices_b() const;
 
+    uint8_t* card_buffer() const;
+
     /** Hands the buffers out again from the start, for a re-init. */
     void rewind();
 
@@ -76,6 +79,7 @@ private:
     std::vector<float>         _detector[kLineBufCount];
     mutable std::vector<size_t> _slices[kDecksCount];
     mutable std::vector<Event>  _track[kDecksCount];
+    mutable std::vector<uint8_t> _card;
 
     size_t _providedSourceBufCount      { 0 };
     size_t _providedDetectorBufCount    { 0 };

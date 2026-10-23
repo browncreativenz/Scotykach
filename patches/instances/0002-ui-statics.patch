@@ -1,0 +1,77 @@
+diff --git a/src/ui/core.ui.cpp b/src/ui/core.ui.cpp
+index 5e1312f..0b0cc90 100644
+--- a/src/ui/core.ui.cpp
++++ b/src/ui/core.ui.cpp
+@@ -544,8 +544,8 @@ void CoreUI::_process_switches()
+ 
+     // Manual tempo tap switch
+     // Update no faster than 250Hz
+-    static auto is_tap_tapped = false;
+-    static uint32_t last_tap_update = 0;
++    auto& is_tap_tapped = _is_tap_tapped;        // Desktop (Scotykach): members, were statics
++    auto& last_tap_update = _last_tap_update;
+     uint32_t now = System::GetNow();
+     if(now - last_tap_update >= 4)
+     {
+@@ -597,9 +597,9 @@ void CoreUI::_process_switches()
+ }
+ 
+ // Clock ..........................................
+-static bool clock_state = false;
+ void CoreUI::tick()
+ {
++    auto& clock_state = _clock_state;            // Desktop (Scotykach): a member, was a static
+     auto&d = _core.driver();
+     auto new_state = false;
+     auto midi_state = _midi.process();
+diff --git a/src/ui/core.ui.h b/src/ui/core.ui.h
+index 8e99de0..14976ff 100644
+--- a/src/ui/core.ui.h
++++ b/src/ui/core.ui.h
+@@ -252,6 +252,15 @@ private:
+     bool _clock_led_on;
+     bool _clock_source_changed;
+     bool _tap_was_tapped;
++
++    // Desktop (Scotykach): these were function and file statics, so every
++    // CoreUI in the process shared them. One set per instance now.
++    bool     _is_tap_tapped   = false;           // _process_switches
++    uint32_t _last_tap_update = 0;               // _process_switches
++    bool     _clock_state     = false;           // tick
++    int      _led_count       = 0;               // render_leds
++    float    _launch_t        = 0.f;             // _draw_launching
++    bool     _rec_led_on[Deck::Count] = {};      // _draw_play
+ };
+ 
+ };
+diff --git a/src/ui/core.ui.leds.cpp b/src/ui/core.ui.leds.cpp
+index 720e970..5c49fb6 100644
+--- a/src/ui/core.ui.leds.cpp
++++ b/src/ui/core.ui.leds.cpp
+@@ -56,7 +56,7 @@ static uint32_t flux_color(const Flux::Mode mode)
+ 
+ void CoreUI::render_leds() 
+ {
+-    static auto led_count = 0;
++    auto& led_count = _led_count;                // Desktop (Scotykach): a member, was a static
+     if (_clock_led_on) {
+         led_count ++;
+         if (led_count == 11) {
+@@ -140,7 +140,7 @@ void CoreUI::_draw_leds()
+ }
+ void CoreUI::_draw_launching()
+ {
+-    static float t = 0.0f;
++    auto& t = _launch_t;                         // Desktop (Scotykach): a member, was a static
+     t += 0.0036f;
+     const size_t num = 14;
+     const float totalFadeInTime = 0.05f * (num - 1) + 0.1f;
+@@ -232,7 +232,7 @@ void CoreUI::_draw_play(const Deck::Ref ref, const bool blink)
+     if (deck.is_armed() || deck.is_recording()) {
+         auto inout = deck.is_armed() != deck.is_recording();
+         auto rec = !inout;
+-        static bool led_on[Deck::Count] = { false, false };
++        auto& led_on = _rec_led_on;              // Desktop (Scotykach): a member, was a static
+         if (deck.mode() == Mode::Slice) {
+             led_on[ref] = _clock_led_on;
+         }

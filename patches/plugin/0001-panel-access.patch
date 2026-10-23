@@ -1,0 +1,24 @@
+diff --git a/src/ui/core.ui.h b/src/ui/core.ui.h
+index 14976ff..003c5ba 100644
+--- a/src/ui/core.ui.h
++++ b/src/ui/core.ui.h
+@@ -20,6 +20,9 @@
+ #include "time.iterval.h"
+ #include "led.ring.h"
+ 
++// Desktop (Scotykach): the plugin's parameter adapter, see core/ScotykachPanel.h.
++namespace scotykach { class Panel; }
++
+ namespace spotykach { 
+ 
+ static constexpr std::array<float, 7> kSpeedSteps = { 
+@@ -33,6 +36,9 @@ static constexpr std::array<float, 7> kSpeedSteps = {
+ };
+ 
+ class CoreUI {
++    // Desktop (Scotykach): lets each plugin parameter set its value as
++    // _on_midi_cc does, and read it back.
++    friend class ::scotykach::Panel;
+ public:
+     CoreUI(Hardware&, Core&, Settings&, Storage&);
+     ~CoreUI() = default;

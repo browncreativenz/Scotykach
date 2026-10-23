@@ -83,38 +83,45 @@ are fixed with small patches (below), not by editing the submodule.
 
 ```
 CMakeLists.txt              top level (S2 adds JUCE 8.0.16-security)
-cmake/Firmware.cmake        patched copies of the firmware, DaisySP, engine libraries
+cmake/Firmware.cmake        patched copies of the firmware, DaisySP, the libraries
 external/spotykach/         submodule, v1.3.1 (never edited)
 external/DaisySP/           submodule, at the firmware's pinned commit
 patches/portability/        make x86 behave as the module's Cortex-M7 does
-patches/instances/          let several engines share one process
-core/                       desktop shell, plain C++17, no JUCE
-  shim/                     libDaisy stand-ins: System and StopwatchTimer (sample
-                            clock), ScopedIrqBlocker, Logger; prelude.h (force-included)
-  shim/Context.h            per-engine clock and memory pool, current per thread
-  shim/hw/buffer.sdram.h    the firmware's memory pool, on the heap, one per engine
-  ScotykachEngine.h/.cpp    the module's interrupts in order, 96-sample FIFO   (S0)
-  Resampler.h, RateBridge.h host rate <-> 48 kHz, copied from Granular-plugin  (S1)
-  shim/hw/hardware.h        Hardware: pots, CV, pads, switches, gates, LEDs     (S1)
-  shim/memory/              Storage and Settings backed by plugin state         (S1)
-  ScotykachProcessor.h/.cpp host-facing: rate bridge, clock sync, parameters    (S1)
+patches/instances/          let several modules share one process
+patches/plugin/             the one hook the plugin needs into CoreUI
+core/                       desktop side, plain C++17, no JUCE
+  shim/                     libDaisy stand-ins (System and StopwatchTimer on the
+                            sample clock, UiEventQueue, PotMonitor, MIDI types,
+                            PersistentStorage, ...); prelude.h (force-included)
+  shim/Context.h            per-module clock and memory pool, current per thread
+  overlay/hw/               written over the firmware copy's src/hw: Hardware (the
+                            panel as plain state), Card (no SD card), the memory pool
+  ScotykachEngine           the engine alone (src/core), as in S0: for tests
+  ScotykachModule           the whole firmware, as app.cpp's AppImpl runs it
+  ScotykachPanel            pots, switches, pads, CV, gates, MIDI into the firmware
+  ScotykachParams           the 70 plugin parameters: IDs, kinds, defaults
+  ScotykachProcessor        host-facing: rate bridge, parameters, MIDI, Live's clock
+  Resampler.h, RateBridge.h host rate <-> 48 kHz, copied from Granular-plugin
 plugin/                     JUCE AudioProcessor and editor                      (S2)
-tools/Script.h              text actions on the engine (rec:A, mode:A=slice, ...)
-tools/render/               scotykach_render: scripted actions, WAV in and out
-tests/                      scenario tests, multi-instance test, firmware comparison
+tools/HostRig.h             drives a Processor as a host would
+tools/render/               scotykach_render: the processor, scripted, WAV in and out
+tests/                      engine, module, processor, parameter and resampler tests
 .github/workflows/          CI: Linux GCC, Clang and sanitizers; macOS
 ```
 
-Shim headers come first on the include path. The firmware's own includes,
-such as `"hw/buffer.sdram.h"` or `<daisy_seed.h>`, then resolve to the
-desktop versions.
+Shim headers come first on the include path, so the firmware's
+`<daisy_seed.h>` and the like resolve to the desktop versions. The
+hardware layer (`src/hw`) is replaced whole instead: the build writes
+`core/overlay/hw/*.h` over the copy's own files, so every include finds
+the desktop version however it is spelled (`"../hw/hardware.h"` too).
 
 ## Firmware patches
 
 At configure time the build copies the firmware's `src/` into the build
-tree and applies the patches, in order. If a patch no longer applies (after
-a firmware update, say), configuring stops and names it. Each changed line
-carries a `Desktop (Scotykach)` comment.
+tree, applies the patches in order, and writes the hardware overlay over
+`src/hw`. If a patch no longer applies (after a firmware update, say),
+configuring stops and names it. Each changed line carries a
+`Desktop (Scotykach)` comment.
 
 | Patch | Why |
 |---|---|
@@ -122,7 +129,15 @@ carries a `Desktop (Scotykach)` comment.
 | `portability/0002-repeatable-panner` | The Generative Stereo panner draws from `std::random_device`, which reads OS entropy on a desktop, so no two renders were alike. A default-seeded `std::mt19937` makes renders and Live exports repeat |
 | `portability/0003-arm-float-to-int` | Overdubbing at exactly 1x divides by zero in the write-head skip, and the empty-buffer playhead is 0/0. The module converts inf and NaN to integers by saturating (inf to 0xFFFFFFFF, NaN to 0); GCC and Clang on x86-64 each give other values, which took the other branch. `arm_f2u32()` and `arm_f2s32()` convert as the module does |
 | `portability/0004-clang-array` | `Flux::switch_mode` initialises a variable-length array, a GCC extension Clang rejects. A `constexpr` count gives the same array |
+| `portability/0005-int32-max` | `LEDRing` calls `std::max(int32_t, long)`, which compiles only where `int32_t` is `long`, as on the module's toolchain |
 | `instances/0001-per-instance-buffer-tables` | `Core::init` kept its buffer tables in function statics, so a second engine in the process wrote into the first one's loops (and `Detector` keeps the table's address). They become `Core` members |
+| `instances/0002-ui-statics` | `CoreUI` kept six values in statics: the Tap switch's state and its throttle, the MIDI clock edge, and three LED animation counters. Shared, one instance's MIDI clocks reached another (the instance test catches it). They become `CoreUI` members |
+| `plugin/0001-panel-access` | Declares `scotykach::Panel` a friend of `CoreUI`, so each parameter can set its value as `CoreUI::_on_midi_cc` does |
+
+One static is left shared, on purpose: `DeckStorage::process` keeps an SD
+card error flag, which can never be set without a card. `Config::dynamic()`
+(the SD card's `config.txt`) is also process-wide, but stays at its
+defaults, since there is no card to read it from.
 
 DaisySP and the firmware also build with `-fwrapv`: DaisySP's `WhiteNoise`
 relies on signed overflow wrapping, as it does on the module.
@@ -136,7 +151,8 @@ bytes, so the instance patch provably changes nothing about the sound.
 The sanitizer CI job (`-DSCOTYKACH_SANITIZE=ON`) runs every test under
 AddressSanitizer and UndefinedBehaviorSanitizer, including out-of-range
 float-to-integer conversions. That is how patches 0001 and 0003 were found,
-and it fails on any new report, so S1's `src/ui` gets the same check.
+and it fails on any new report. With S1's UI, storage and processor in, it
+reports nothing.
 
 ### What else S0 found
 
@@ -153,6 +169,27 @@ and it fails on any new report, so S1's `src/ui` gets the same check.
   generators, reads the gate inputs and refreshes the LEDs. Both run every
   2 ms, so the rate is the same.
 
+### What S1 found
+
+- **The whole firmware matches the engine alone.** Driven through the
+  panel, the module (engine, UI, storage) gives exactly the samples the S0
+  engine gives for the same performance, in every mode and route
+  (`tests/module_test.cpp`). The UI adds behaviour, not sound.
+- **Switch order.** When the route and mode switches change at once,
+  `CoreUI::_process_switches` applies the route first; the Generative
+  Stereo panner then sets up differently than the other way round.
+- **Locking to Live's clock.** `Driver::reset()`, which MIDI Start calls,
+  fakes a beat if the clock source changed less than 4 ms before, and
+  then every beat lands a 16th early. The processor therefore locks by
+  stepping the clock source round (a forced reset) and sending the first
+  clock, instead of sending Start. See Clock sync below.
+- **No SD card, no settings.** With the desktop `Card` reporting no card,
+  `Storage` stays idle, as on a module without one, and the Tap+Play storage
+  gestures do nothing. `Settings` starts from the factory calibration.
+- **Boot.** The LED start-up animation (about 3.3 s at the module's 125 Hz
+  LED rate) is run to its end when the module is created, then CoreUI takes
+  its factory values, so the plugin is playable at once.
+
 ### Timing: one firmware "tick" per 96 samples
 
 On the hardware, several things run at different rates:
@@ -161,28 +198,46 @@ On the hardware, several things run at different rates:
 |---|---|---|
 | TIM5 interrupt: `process_gate_in`, `Core::prepare`; LEDs every 4th call | 500 Hz = every 2 ms | once per block, since 96 samples at 48 kHz is exactly 2 ms |
 | Audio callback: `ProcessAnalogControls`, `CoreUI::tick` (MIDI, then `Driver::tick`: the clock), `read_cv`, `Core::process` | every 96 samples | the same, on each full 96-sample block |
-| Main loop: `CoreUI::process` (pots, pads, switches) | as fast as it can | once per block |
+| Main loop: `CoreUI::process` (pads, switches, values), `Storage::process` | as fast as it can | once per block, first |
 | DAC callback: `Modulator::process`, the two CV outputs | 48 kHz | 96 times per block |
 
 Everything runs in that order on the audio thread, one block at a time.
 That removes the races between interrupts and the main loop, and makes
-renders repeatable. The shim's `System::GetNow()` and `StopwatchTimer`
-(and in S1 `GetTick()`) count engine samples instead of wall-clock time. Hold
+renders repeatable. The shim's `System::GetNow()`, `GetTick()` and
+`StopwatchTimer` count engine samples instead of wall-clock time. Hold
 times, tap tempo and the clock timeout then behave the same in an offline
-export as in real time.
+export as in real time; the tests check hold-to-clear (1.5 s) and tap
+tempo.
 
-A 96-sample FIFO decouples the engine from host block sizes, as Capicola's
-64-sample FIFO does. That adds 2 ms of latency, reported to Live, plus
-about 2.7 ms for resampling at rates other than 48 kHz.
+A 96-sample FIFO decouples the module from host block sizes, as Capicola's
+64-sample FIFO does. The latency reported to Live is 96 samples at 48 kHz
+(2 ms), 217 at 44.1 kHz, 413 at 88.2 kHz and 449 at 96 kHz.
 
 ### Clock sync with Live
 
-`Driver` already accepts an external clock at 24 PPQN, its MIDI clock mode.
-The processor reads Live's tempo and beat position each block and makes
-24 PPQN ticks at the exact sample where each falls. It also sends Start on
-the transport's start and Stop on its stop. Quantised record, Slice mode's
-grid and the sequencer then lock to Live's bars. When Live's transport is
-stopped, the module's own internal clock can be used instead.
+The Clock parameter is **Live** (the default) or **Internal**.
+
+- **Live, transport playing:** the module runs on its MIDI clock input
+  (`Driver`'s 24 PPQN mode). For every 2 ms module block the processor works
+  out where that block's audio sits on Live's timeline (the host's beat
+  position and tempo, through the sample-rate ratio and the up-converter's
+  delay) and delivers each 24th of a beat in the block where it falls,
+  which is the module's own clock resolution.
+- **Locking:** the module locks at the first bar line after Live starts,
+  so its bars are Live's bars (a bar line up to one host block behind still
+  counts, since hosts report the transport per block), and again after Live
+  jumps (a loop brace, a click in the arrangement). Until then it keeps time
+  on its internal clock at Live's tempo.
+- **Live, transport stopped:** the internal clock at Live's tempo, so Slice
+  mode still records and loops in time.
+- **Internal:** the module's own clock, Tempo control and Tap.
+
+Measured with a simulated transport: a Slice recording started and stopped
+off the beat is exactly four beats long at 100 and 120 BPM, and its
+playback starts 2.4 ms after a host beat (the 2 ms FIFO and the slice's
+fade-in). After a jump, the next loop is on the new grid. Live's own MIDI
+Start and Stop are not needed; Stop is still sent when Live stops, as the
+module would get it.
 
 ## Parameters
 
@@ -207,28 +262,51 @@ Plus the Crossfade pot (shared), and these:
 
 | Group | Parameters (per deck A/B, unless noted) |
 |---|---|
-| Switches | Route (Stereo, Double Mono, Generative Stereo, shared); deck mode (Reel, Slice, Drift); mod type (LFO square, LFO random, Follow) |
+| Switches | Route (Stereo, Double Mono, Generative Stereo, shared); deck mode (Reel, Slice, Drift); mod type (A: Follow, LFO square, LFO random; B: Follow, LFO saw, LFO sine); Size/Pos CV route (Position, Both, Size); and the plugin's Clock (Live, Internal) |
 | CV inputs | Size/Pos, Mix, V/Oct; Crossfade (shared): automatable, like Capicola's Mod In |
-| Pads and buttons | Play, Rev, Grit, Flux, Seq per deck; Spot; Alt; Tap: button parameters plus MIDI notes |
+| Pads and buttons | Play, Rev, Grit, Flux, Seq per deck; Spot; Alt; Tap; the two gate inputs: button parameters, to MIDI-map in Live |
 
 **Decided: each layered control is its own parameter** (SOS Feedback,
 Grit Mix, Tempo and so on), so each automates and MIDI-maps on its own in
-Live. On the module the layers use pick-up (`MValue`): a value moves only
-once the pot passes it, so nothing jumps when you switch layers. With a
-parameter per control there is nothing to pick up, so S1 adds a small
-adapter that writes each parameter straight to its `MValue`. The window can
-still show the module's layers.
+Live. `Panel` sets each one as the firmware's MIDI CC handler does
+(`MValue::set`), so there is no pick-up and nothing jumps. Two pot gestures
+keep their meaning when their button is held: Size in Slice mode with Tap
+held fits the tempo to the loop, and Pitch with Alt held quantises.
+
+The 70 parameters (`core/ScotykachParams.cpp`, `scotykach_render --list`):
+
+| Group | Count | IDs |
+|---|---|---|
+| Deck controls, 0..1 | 2 × 17 | `a_pos`, `a_pos_offset`, `a_size`, `a_pitch`, `a_env`, `a_mix`, `a_feedback`, `a_window`, `a_env_size`, `a_mod_speed`, `a_mod_amount`, `a_grit_amount`, `a_grit_mix`, `a_grit_char`, `a_flux_time`, `a_flux_mix`, `a_flux_fb`; likewise `b_` |
+| Shared controls, 0..1 | 6 | `crossfade`, `tempo`, `key_interval`, `click`, `pan_speed`, `pan_range` |
+| CV inputs, -1..1 (±5 V) | 7 | `cv_a_size_pos`, `cv_a_mix`, `cv_a_voct`, `cv_crossfade`, `cv_b_...` |
+| Switches | 8 | `route`, `a_mode`, `b_mode`, `a_mod_type`, `b_mod_type`, `a_cv_route`, `b_cv_route`, `clock` |
+| Buttons | 15 | the 12 pads (`a_play` ... `alt`), `tap`, `a_gate`, `b_gate` |
+
+Defaults are the module's factory values, checked against a booted module
+(`tests/params_test.cpp`); the decks start in Reel. When the firmware moves
+a value itself (tap tempo, a MIDI CC, Size fitting the tempo, Pitch settling
+on a quantised step), the parameter follows and the processor reports it,
+so S2 can tell Live.
+
+Buttons that change in the same host block are pressed modifiers first
+(Tap, Alt, Grit, Flux, then the rest) and released in the reverse order,
+so Alt and Play arriving together record, as Alt then Play does on the
+module.
 
 MIDI into the plugin works as on the module: `CoreMIDI` handles its note map
-and its CC map (`config.h`: CC 3 crossfade, 20–28 deck controls, 85/86
-direction, 102–109 FX, and so on), on channels 1 and 2 by default.
+and its CC map (`config.h`: CC 3 crossfade, 14/15 record, 20–28 deck
+controls, 85/86 play forward/reverse, 102–109 FX), on channel 1 for deck A
+and 2 for deck B. A note triggers the deck at its pitch (middle C is 1x).
+Messages reach the module at their own sample: the processor splits the
+host block there.
 
 ## Milestones
 
 | # | Milestone | Where | Done when |
 |---|---|---|---|
 | S0 ✅ | Submodules; patches; `shim/` with heap pool and sample clock; firmware `src/core` built into `scotykach_fw`; `ScotykachEngine`; `scotykach_render` with scripted actions; CTest scenarios; CI on Linux (GCC, Clang, sanitizers) and macOS | Cloud session | Reel, Slice and Drift record and loop; output is identical whatever the host block size; engines are independent in one process; the instance patch changes no output; no sanitizer reports |
-| S1 | Desktop `Hardware`; firmware `CoreUI` and `CoreMIDI`, with instance patches for the statics they keep (tap and clock-edge state, LED animation); `Storage` and `Settings` backed by memory; `ScotykachProcessor` with rate bridge, FIFO and Live clock sync | Cloud session | Gesture tests pass (hold to clear, Alt combos, quantised record locked to a simulated host transport); multi-rate checks pass |
+| S1 ✅ | Desktop `Hardware` (overlay); firmware `CoreUI`, `CoreMIDI`, `Storage` and `Settings` running, with patches for the UI's statics and the panel hook; `ScotykachModule`, `ScotykachPanel`, the parameter table; `ScotykachProcessor` with rate bridge, MIDI at sample offsets and Live clock sync; the renderer on the processor | Cloud session | The module matches the engine alone; gestures work (Alt+Play record, hold to clear, Grit hold and lock, tap tempo, Pitch quantise, Size fits tempo); Slice locks to a simulated host transport; 44.1–96 kHz; block-size independent; instances independent; no sanitizer reports |
 | S2 | JUCE plugin with generic controls; pads as buttons and MIDI notes; state save and load including recorded loops; macOS CI with `auval` and `pluginval` | Cloud session, then your Mac | Loads in Live, records and loops in time with Live's tempo, and a saved set reopens with its loops |
 | S3 | Gate outs, LFO outs and clock out as MIDI on a "Scotykach 1" virtual port, using the MIDI-out code copied from Capicola | Cloud plus your Mac | Gate notes play a Drum Rack; LFO CCs MIDI-map in Live |
 | S4 | The plugin window, from a mockup you approve first: 12 pads, two 32-LED rings drawn from the firmware's own LED output, pots, switches, crossfader | Cloud session builds it and renders screenshots; your Mac for feel | Looks like the mockup, and the LEDs match the module |
@@ -242,12 +320,12 @@ direction, 102–109 FX, and so on), on channels 1 and 2 by default.
   slower to save such sets; S2 checks how it copes.
 - **Pads and a mouse.** Many gestures press two pads at once: Alt plus a
   pad, holding Play, Seq combinations. With a mouse that means a latching Alt
-  and Shift in the window. MIDI notes from a pad controller allow true
-  chords; a Push or any pad controller is the natural way to play it.
-- **Firmware behaviour tied to timing.** `CoreUI` measures holds and
-  blinks with libDaisy timers. Driving those from the sample clock keeps
-  them right, but S1's gesture tests should confirm hold-to-clear and tap
-  tempo.
+  and Shift in the window. A pad controller MIDI-mapped to the button
+  parameters allows true chords; a press and release inside one host block
+  (under about 10 ms) would be lost, which no hand manages.
+- **CPU.** A 60 s render with both decks playing, Grit on and resampling at
+  44.1 kHz took 3.4 s on a cloud x86 core: about 5.5 % of one core. To
+  measure in Live, at a small buffer.
 - **Random sequences differ by platform.** Drift's grain positions use
   `std::default_random_engine` and `std::normal_distribution`, which
   libstdc++ (Linux, and the module's toolchain) and libc++ (macOS)
@@ -256,8 +334,7 @@ direction, 102–109 FX, and so on), on channels 1 and 2 by default.
 - **Memory.** Two 42 s stereo buffers, about 32 MB, plus delay lines, per
   instance (the firmware's third, for undo, is unused in v1.3.1). They are
   allocated when the engine is created, never on the audio thread.
-- **Calibration and boot.** The module calibrates its CV inputs and plays
-  a boot animation. The shim reports calibration as done and moves
-  `CoreUI` straight to its ready state, after `_init_values`.
+- **Calibration and boot.** Handled (see What S1 found): factory
+  calibration, and the start-up animation skipped.
 - **Firmware updates.** Pin to tags. A patch that no longer applies stops
   the build; the scenario tests and sanitizers then check the new version.

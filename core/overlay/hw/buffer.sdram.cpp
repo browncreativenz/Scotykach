@@ -9,6 +9,7 @@ SDRAMBuffer::SDRAMBuffer()
     for (auto& b : _detector) b.assign(Detector::kWindow, 0.f);
     for (auto& b : _slices)   b.assign(kMaxSlicePointCount, 0);
     for (auto& b : _track)    b.assign(Track::kLength, Event {});
+    _card.assign(Card::kChunk, 0);
 }
 
 Buffer::Frame* SDRAMBuffer::sourceBuffer()
@@ -39,6 +40,8 @@ Event* SDRAMBuffer::track_buffer_b() const { return _track[1].data(); }
 
 size_t* SDRAMBuffer::slices_a() const { return _slices[0].data(); }
 size_t* SDRAMBuffer::slices_b() const { return _slices[1].data(); }
+
+uint8_t* SDRAMBuffer::card_buffer() const { return _card.data(); }
 
 void SDRAMBuffer::rewind()
 {

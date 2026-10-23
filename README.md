@@ -6,20 +6,25 @@ a two-deck looping and granular instrument.
 
 ## Status
 
-Milestone S0 of [the plan](docs/PLAN.md) is done: the firmware's audio
-engine (v1.3.1) runs on a desktop.
+Milestones S0 and S1 of [the plan](docs/PLAN.md) are done: the whole
+firmware (v1.3.1), its audio engine and its own UI code, runs on a desktop
+behind a plugin-ready processor. There is no plugin yet; that is S2 (JUCE).
 
-- Reel, Slice and Drift record and loop. Slice locks recording and
-  playback to the clock, as on the module.
-- Output is the same whatever block size the host uses, and several
-  engines in one process are independent, as plugin instances in Live are.
+- Reel, Slice and Drift record and loop, played with the module's own
+  gestures: Alt+Play records, Alt+Seq arms the sequencer and holding Seq
+  clears it, Grit and Flux work while held and lock with Alt, Tap sets the
+  tempo.
+- Every pot control is its own parameter (70 in all, `scotykach_render
+  --list`), including the ones the module reaches by holding a button.
+- The clock follows a host transport: Slice mode records and loops on the
+  host's beats, and locks to its bars.
+- Any sample rate (44.1 to 96 kHz tested), any block size, several
+  instances in one process, MIDI notes and CCs at their exact sample.
 - The firmware is built from a patched copy; the submodule itself is never
   edited. The [patches](docs/PLAN.md#firmware-patches) make x86 behave as
-  the module's processor does where the two differ, and let engines share
-  a process. Tests show the second kind changes nothing about the sound.
-
-There is no plugin yet: that is S1 (the module's controls and Live's clock)
-and S2 (the JUCE plugin).
+  the module's processor does where the two differ, let instances share a
+  process, and give the plugin its one hook into the UI. With its UI, the
+  firmware gives exactly the samples its engine alone gives.
 
 ## Build
 
@@ -40,18 +45,20 @@ UndefinedBehaviorSanitizer, as CI does.
 
 ```sh
 ./build/scotykach_render out.wav                  # demo: deck A loops 2 s of a test signal
+./build/scotykach_render --list                   # every parameter, its range and default
 ./build/scotykach_render --in loop.wav --mute-from 2.5 \
-    --at 0 mode:A=slice --at 0 sos:A=1 --at 0 crossfade=0 \
-    --at 0.5 rec:A --at 2.5 rec:A --at 4 pitch:A=0.8 out.wav
+    --at 0 a_mode=slice --at 0 a_mix=1 --at 0 crossfade=0 \
+    --at 0.5 rec:A --at 2.5 rec:A --at 4 a_pitch=0.8 out.wav
+./build/scotykach_render --rate 44100 --bpm 120 \
+    --at 0 a_mode=slice --at 0.6 midi:B0,0E,7F --at 2.7 midi:B0,0E,7F out.wav
 ```
 
-`--at T ACTION` applies an action at T seconds. Pads are `rec:A`,
-`recint:A` (record the other deck), `play:A` and `rev:A`; knobs take a
-position from 0 to 1 (`pos`, `size`, `pitch`, `env`, `sos`, `fb`, `win`,
-`envsize`, `gritamt`, `fluxamt`, `crossfade`); switches are `mode:A=reel|slice|drift`
-and `route=stereo|mono|gen`; also `grit:A=on`, `flux:A=on` and `tempo=120`.
-The full list is in [tools/Script.h](tools/Script.h). Input must be 48 kHz
-for now.
+This runs the whole module through the plugin's processor. `--at T ACTION`
+does an action at T seconds: `ID=VALUE` sets a parameter (switches by name,
+as `a_mode=slice`), `press:ID`, `release:ID` and `tap:ID` work the buttons,
+`rec:A` is Alt held while tapping Play, and `midi:B0,0E,7F` sends a MIDI
+message (CC 14 on channel 1 records deck A). `--bpm` adds a host transport
+for the clock to follow. Input can be any sample rate.
 
 ## Layout
 
@@ -59,11 +66,13 @@ for now.
   the DaisySP version it pins, as git submodules.
 - `patches/` — changes applied to a copy of the firmware at build time.
 - `cmake/Firmware.cmake` — applies them and builds the firmware libraries.
-- `core/` — `ScotykachEngine`, which runs the firmware as the module's
-  interrupts do, and `shim/`, the desktop stand-ins for libDaisy.
-- `tools/` — the renderer and its scripting.
-- `tests/` — scenario tests, the multi-instance test and the comparison
-  with the firmware.
+- `core/` — the desktop side: `shim/` (libDaisy stand-ins) and `overlay/hw/`
+  (the hardware, replaced whole); `ScotykachModule`, the firmware as its
+  `app.cpp` runs it; `ScotykachPanel`, the controls into it;
+  `ScotykachParams`, the parameter table; `ScotykachProcessor`, what the
+  plugin will wrap; `ScotykachEngine`, the engine alone, for tests.
+- `tools/` — the renderer, the host rig it shares with the tests.
+- `tests/` — engine, module, processor, parameter and resampler tests.
 - `docs/PLAN.md` — the build plan and milestones.
 
 ## Licence

@@ -1,0 +1,15 @@
+diff --git a/src/ui/led.ring.cpp b/src/ui/led.ring.cpp
+index 7d985b9..1ea37bd 100644
+--- a/src/ui/led.ring.cpp
++++ b/src/ui/led.ring.cpp
+@@ -18,7 +18,9 @@ inline void extrapolate(
+     const bool reverse = false)
+ {
+     p1 = static_cast<int32_t>(p);
+-    if (reverse) p2 = std::max(p1 - 1, 0l);
++    // Desktop (Scotykach): int32_t is long on the module's toolchain, so
++    // max(int32_t, long) compiles there but not where int32_t is int.
++    if (reverse) p2 = std::max<int32_t>(p1 - 1, 0);
+     else p2 = p1 + 1;    
+     auto frac = smoothstep_frac(p - p1);
+     b1 = (1.f - frac) * b;
