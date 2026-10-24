@@ -19,6 +19,9 @@ const char* const kModTypeAChoices[] = { "Follow", "LFO Square", "LFO Random" };
 const char* const kModTypeBChoices[] = { "Follow", "LFO Saw", "LFO Sine" };
 const char* const kCvRouteChoices[]  = { "Position", "Both", "Size" };
 const char* const kClockChoices[]    = { "Live", "Internal" };
+const char* const kAfterRecChoices[] = { "Play", "Overdub" };
+const char* const kRecSourceChoices[] = { "Input", "Deck" };
+const char* const kOffOn[]           = { "Off", "On" };
 
 struct DeckControlInfo { const char* id; const char* name; float defaultValue; };
 
@@ -68,11 +71,15 @@ const char* const kButtonIds[kButtons] = {
     "a_play", "a_rev", "a_grit", "a_flux", "a_seq",
     "b_play", "b_rev", "b_grit", "b_flux", "b_seq",
     "spot", "alt", "tap", "a_gate", "b_gate",
+    "a_record", "b_record", "a_clear", "b_clear",
+    "a_seq_rec", "b_seq_rec", "a_seq_clear", "b_seq_clear",
 };
 const char* const kButtonNames[kButtons] = {
     "A Play", "A Rev", "A Grit", "A Flux", "A Seq",
     "B Play", "B Rev", "B Grit", "B Flux", "B Seq",
     "Spot", "Alt", "Tap", "A Gate", "B Gate",
+    "A Record", "B Record", "A Clear", "B Clear",
+    "A Seq Rec", "B Seq Rec", "A Seq Clear", "B Seq Clear",
 };
 
 struct Table
@@ -108,6 +115,19 @@ struct Table
         choice(kCvRouteA, "a_cv_route", "A CV Route",  1.f, kCvRouteChoices,  3);   // switch centred
         choice(kCvRouteB, "b_cv_route", "B CV Route",  1.f, kCvRouteChoices,  3);
         choice(kClock,    "clock",      "Clock",       0.f, kClockChoices,    2);   // follow Live
+        choice(kAfterRecording, "after_rec", "After Recording", 0.f, kAfterRecChoices, 2);   // plain playback
+        choice(kRecSourceA, "a_rec_source", "A Record From", 0.f, kRecSourceChoices, 2);
+        choice(kRecSourceB, "b_rec_source", "B Record From", 0.f, kRecSourceChoices, 2);
+        choice(kGritLockA,  "a_grit_lock",  "A Grit Lock",    0.f, kOffOn, 2);
+        choice(kGritLockB,  "b_grit_lock",  "B Grit Lock",    0.f, kOffOn, 2);
+        choice(kFluxLockA,  "a_flux_lock",  "A Flux Lock",    0.f, kOffOn, 2);
+        choice(kFluxLockB,  "b_flux_lock",  "B Flux Lock",    0.f, kOffOn, 2);
+        choice(kQuantiseA,  "a_quantise",   "A Pitch Quantise", 0.f, kOffOn, 2);
+        choice(kQuantiseB,  "b_quantise",   "B Pitch Quantise", 0.f, kOffOn, 2);
+        choice(kModSyncA,   "a_mod_sync",   "A Mod Sync",     0.f, kOffOn, 2);
+        choice(kModSyncB,   "b_mod_sync",   "B Mod Sync",     0.f, kOffOn, 2);
+        choice(kFreeSizeA,  "a_free_size",  "A Free Size",    0.f, kOffOn, 2);
+        choice(kFreeSizeB,  "b_free_size",  "B Free Size",    0.f, kOffOn, 2);
 
         for (int b = 0; b < kButtons; ++b)
             info[ButtonParam((Button)b)] = { kButtonIds[b], kButtonNames[b], Kind::Button, 0.f };

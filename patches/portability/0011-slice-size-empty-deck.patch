@@ -1,0 +1,35 @@
+diff --git a/src/core/generator.cpp b/src/core/generator.cpp
+--- a/src/core/generator.cpp
++++ b/src/core/generator.cpp
+@@ -139,7 +139,12 @@
+     }
+   }
+   else if (_snap_to_cue) { /* slice mode */
+-    _cue_size_delta = static_cast<uint8_t>(std::max(abs_size / _slice_size, 1.f));
++    // Desktop (Scotykach): an empty deck in Slice mode (just cleared) has
++    // no slices, so this and the slice counts below are inf or NaN; the
++    // module's VCVT saturates them (inf to the largest value, NaN to 0),
++    // and arm_f2u32 (shim/prelude.h) does the same here, where the
++    // conversions would be undefined.
++    _cue_size_delta = static_cast<uint8_t>(arm_f2u32(std::max(abs_size / _slice_size, 1.f)));
+     // Desktop (Scotykach): with a loop under two 16ths there are no slices,
+     // and _auto_cue_max_idx wraps to the largest size_t. On the module that
+     // is 0xFFFFFFFF (32 bits) and the conversion saturates; here size_t has
+@@ -153,7 +158,7 @@
+     abs_start = _slice_size * start_idx;
+     if (!_alt_size) {
+       // Snap size to 1/8th by default, except for min and max where it snaps to 1/16th.
+-      auto slice_count = static_cast<uint32_t>(std::round(abs_size / _slice_size));  
++      auto slice_count = arm_f2u32(std::round(abs_size / _slice_size));   // Desktop (Scotykach): as above
+       if (slice_count == 0) abs_size = _slice_size * .51f; // +0.01 overmeasure to compensate rounding to ticks
+       else abs_size = slice_count * _slice_size + 0.01f;   // +0.01 overmeasure to compensate rounding to ticks
+       if (buffer_size - abs_size < _slice_size * .5f) {
+@@ -163,7 +168,7 @@
+     }
+     else {
+       auto half_slice = _slice_size * .5f;
+-      auto slice_count = static_cast<uint32_t>(std::round(abs_size / half_slice));  
++      auto slice_count = arm_f2u32(std::round(abs_size / half_slice));   // Desktop (Scotykach): as above
+       abs_size = slice_count * half_slice + 0.01f;
+     }
+   }

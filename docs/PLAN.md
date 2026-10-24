@@ -100,7 +100,7 @@ core/                       desktop side, plain C++17, no JUCE
   ScotykachEngine           the engine alone (src/core), as in S0: for tests
   ScotykachModule           the whole firmware, as app.cpp's AppImpl runs it
   ScotykachPanel            pots, switches, pads, CV, gates, MIDI into the firmware
-  ScotykachParams           the 70 plugin parameters: IDs, kinds, defaults
+  ScotykachParams           the 91 plugin parameters: IDs, kinds, defaults
   ScotykachProcessor        host-facing: rate bridge, parameters, MIDI, Live's clock
   Resampler.h, RateBridge.h host rate <-> 48 kHz, copied from Granular-plugin
 plugin/                     the JUCE plugin: parameters, transport, MIDI, state
@@ -137,12 +137,14 @@ configuring stops and names it. Each changed line carries a
 | `portability/0008-led-ring-saturating` | The LED ring converts ring positions to integers the same way; positions far outside the ring were undefined here |
 | `portability/0009-mod-sync-index` | With Alt held, Mod Speed at 1 indexes the sync table at -1.0, which the module converts to 0 and x86 to an index past the table |
 | `portability/0010-detector-digital-silence` | The detector that starts a Reel or Drift recording "at the next sound" opened on exact digital silence (DaisySP's `fastlog10f(0)` is about -0.9 dB, above the -40 dB threshold). The module's input always carries some noise; a DAW's silent track is exact zeros, so an armed deck started recording at once. Silence now keeps it waiting |
+| `portability/0011-slice-size-empty-deck` | An empty deck in Slice mode (Clear makes one) has slices of length 0, so the Size conversions divide by zero and convert inf or NaN to integers, which the module saturates and x86 leaves undefined. Found by the stress test once Clear and Free Size existed |
 | `fixes/0001-led-ring-long-segment` | A loop shorter than the shortest slice (1344 samples) makes the ring's segment several rings long; from 128 LEDs on, an `int8_t` loop counter can never reach the end and the main loop freezes. Stops at one ring, which lights the LEDs exactly as before |
 | `fixes/0002-led-ring-negative-position` | The ring wraps negative positions by adding 1 until positive, which never ends once a position is so negative that adding 1 changes nothing (a voice in a loop a few samples long). Subtracting the floor gives the same result and ends |
 | `fixes/0003-midi-cc-other-channels` | A CC on a channel neither deck listens on indexed `deck(2)`, past the two decks, and wrote into the memory after them. Deck CCs on other channels are ignored now; the crossfader, which belongs to no deck, still works on every channel |
 | `instances/0001-per-instance-buffer-tables` | `Core::init` kept its buffer tables in function statics, so a second engine in the process wrote into the first one's loops (and `Detector` keeps the table's address). They become `Core` members |
 | `instances/0002-ui-statics` | `CoreUI` kept six values in statics: the Tap switch's state and its throttle, the MIDI clock edge, and three LED animation counters. Shared, one instance's MIDI clocks reached another (the instance test catches it). They become `CoreUI` members |
 | `plugin/0001-panel-access` | Declares `scotykach::Panel` a friend of `CoreUI`, so each parameter can set its value as `CoreUI::_on_midi_cc` does |
+| `plugin/0002-plugin-switches` | The plugin's own controls for what the module does with Alt: Mod Sync and Free Size flags `CoreUI` reads alongside Alt; read-only Grit and Flux lock state; `Deck::cancel_record` (also drops a Slice recording queued for the next beat, which disarming leaves queued); and After Recording "Play", which stops recording where a closing loop starts to play. All off by default, so the module alone behaves as before |
 
 The `fixes/` patches are firmware bugs, not desktop differences: the module
 would freeze or corrupt memory the same way. All three need input no hand
@@ -237,6 +239,15 @@ reports nothing.
   and README now say so.
 - **The recording detector opened on digital silence** (portability
   0010).
+- **No Alt in the window.** The plugin has no button shortage, so each
+  thing the module does with Alt held has its own button or switch:
+  Record (one button stepping through record, close the loop, overdub,
+  stop overdubbing; it cancels while armed), Clear, Seq Rec, Seq Clear,
+  Record From (input or the deck's own output), Grit and Flux lock,
+  Quantise, Mod Sync and Free Size. **After Recording** defaults to *Play*:
+  a closed loop plays without overdubbing (*Overdub* is the module's way).
+  The Alt and Spot parameters stay, for mappings, but not in the window,
+  and the parameter list below the buttons shows only knobs and settings.
 
 ### Timing: one firmware "tick" per 96 samples
 
@@ -321,7 +332,7 @@ Live. `Panel` sets each one as the firmware's MIDI CC handler does
 keep their meaning when their button is held: Size in Slice mode with Tap
 held fits the tempo to the loop, and Pitch with Alt held quantises.
 
-The 70 parameters (`core/ScotykachParams.cpp`, `scotykach_render --list`):
+The 91 parameters (`core/ScotykachParams.cpp`, `scotykach_render --list`):
 
 | Group | Count | IDs |
 |---|---|---|
@@ -329,7 +340,9 @@ The 70 parameters (`core/ScotykachParams.cpp`, `scotykach_render --list`):
 | Shared controls, 0..1 | 6 | `crossfade`, `tempo`, `key_interval`, `click`, `pan_speed`, `pan_range` |
 | CV inputs, -1..1 (±5 V) | 7 | `cv_a_size_pos`, `cv_a_mix`, `cv_a_voct`, `cv_crossfade`, `cv_b_...` |
 | Switches | 8 | `route`, `a_mode`, `b_mode`, `a_mod_type`, `b_mod_type`, `a_cv_route`, `b_cv_route`, `clock` |
+| The plugin's switches, for what the module does with Alt | 13 | `after_rec` (Play / Overdub), `a_rec_source` (Input / Deck), `a_grit_lock`, `a_flux_lock`, `a_quantise`, `a_mod_sync`, `a_free_size`; likewise `b_` |
 | Buttons | 15 | the 12 pads (`a_play` ... `alt`), `tap`, `a_gate`, `b_gate` |
+| Actions | 8 | `a_record`, `a_clear`, `a_seq_rec`, `a_seq_clear`; likewise `b_`. Each acts once when set to 1 and goes back to 0 itself, so a key mapped in Live acts on every press |
 
 Defaults are the module's factory values, checked against a booted module
 (`tests/params_test.cpp`); the decks start in Reel. When the firmware moves
@@ -355,7 +368,7 @@ host block there.
 |---|---|---|---|
 | S0 ✅ | Submodules; patches; `shim/` with heap pool and sample clock; firmware `src/core` built into `scotykach_fw`; `ScotykachEngine`; `scotykach_render` with scripted actions; CTest scenarios; CI on Linux (GCC, Clang, sanitizers) and macOS | Cloud session | Reel, Slice and Drift record and loop; output is identical whatever the host block size; engines are independent in one process; the instance patch changes no output; no sanitizer reports |
 | S1 ✅ | Desktop `Hardware` (overlay); firmware `CoreUI`, `CoreMIDI`, `Storage` and `Settings` running, with patches for the UI's statics and the panel hook; `ScotykachModule`, `ScotykachPanel`, the parameter table; `ScotykachProcessor` with rate bridge, MIDI at sample offsets and Live clock sync; the renderer on the processor | Cloud session | The module matches the engine alone; gestures work (Alt+Play record, hold to clear, Grit hold and lock, tap tempo, Pitch quantise, Size fits tempo); Slice locks to a simulated host transport; 44.1–96 kHz; block-size independent; instances independent; no sanitizer reports |
-| S2 ✅ | JUCE plugin (VST3, AU, Standalone) with a pads window (momentary pads, latching Alt, the module's LEDs and deck state) above the generic parameter list; the 70 parameters, with firmware changes sent back to the host; the host's playhead as the transport; MIDI in at its sample; state with both loops at full quality; latency-matched bypass; the stress test and three firmware fixes; CI with `auval` and `pluginval` on macOS, `pluginval` on Linux | Cloud session; your Mac for Live | `pluginval` strictness 10 and `auval` pass; plugin tests pass (record with the pads, the clock on the host's tempo, MIDI CC back to the host, state round trip with the loop, mono input, bypass). In Live: still to try on your Mac |
+| S2 ✅ | JUCE plugin (VST3, AU, Standalone) with a window of both decks' buttons and switches (no Alt; the module's LEDs, rings and deck state) above a list of the knobs and settings; the 91 parameters, with firmware changes sent back to the host; the host's playhead as the transport; MIDI in at its sample; state with both loops at full quality; latency-matched bypass; the stress test and three firmware fixes; CI with `auval` and `pluginval` on macOS, `pluginval` on Linux | Cloud session; your Mac for Live | `pluginval` strictness 10 and `auval` pass; plugin tests pass (record with the pads, the clock on the host's tempo, MIDI CC back to the host, state round trip with the loop, mono input, bypass). In Live: still to try on your Mac |
 | S3 | Gate outs, LFO outs and clock out as MIDI on a "Scotykach 1" virtual port, using the MIDI-out code copied from Capicola | Cloud plus your Mac | Gate notes play a Drum Rack; LFO CCs MIDI-map in Live |
 | S4 | The plugin window, from a mockup you approve first: 12 pads, two 32-LED rings drawn from the firmware's own LED output, pots, switches, crossfader | Cloud session builds it and renders screenshots; your Mac for feel | Looks like the mockup, and the LEDs match the module |
 | S5 (optional) | WAV import and export of loops (the firmware has `memory/wav.cpp`), drag and drop with Live; SD-card slots as loop banks | Cloud plus your Mac | A Live clip dropped on a deck plays; a deck loop drags out as a clip |

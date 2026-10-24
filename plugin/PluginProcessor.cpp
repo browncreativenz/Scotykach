@@ -28,6 +28,11 @@ juce::String TempoText(float v, int)
     return juce::String(20.0f + v * 230.0f, 1) + " BPM";   // the firmware's Tempo range
 }
 
+juce::String PlainText(float v, int)
+{
+    return juce::String(v, 2);
+}
+
 } // namespace
 
 ScotykachAudioProcessor::ScotykachAudioProcessor()
@@ -74,15 +79,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout ScotykachAudioProcessor::Cre
         {
             case params::Kind::Unit:
             {
-                auto attributes = juce::AudioParameterFloatAttributes();
-                if (p == tempo) attributes = attributes.withStringFromValueFunction(TempoText);
+                auto attributes = juce::AudioParameterFloatAttributes()
+                                      .withStringFromValueFunction(p == tempo ? TempoText : PlainText);
                 layout.add(std::make_unique<juce::AudioParameterFloat>(
                     id, info.name, juce::NormalisableRange<float>(0.f, 1.f), info.defaultValue, attributes));
                 break;
             }
             case params::Kind::Cv:
                 layout.add(std::make_unique<juce::AudioParameterFloat>(
-                    id, info.name, juce::NormalisableRange<float>(-1.f, 1.f), info.defaultValue));
+                    id, info.name, juce::NormalisableRange<float>(-1.f, 1.f), info.defaultValue,
+                    juce::AudioParameterFloatAttributes().withStringFromValueFunction(PlainText)));
                 break;
             case params::Kind::Choice:
             {

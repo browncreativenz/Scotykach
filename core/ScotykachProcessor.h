@@ -109,6 +109,7 @@ class Processor
     {
         DeckState state   = DeckState::Empty;
         float     seconds = 0.f;   // the loop's length (0 while empty or armed)
+        bool      seqArmed = false;   // the sequencer is armed or recording
     };
     /** Deck 0 is A, 1 is B. Any thread. */
     DeckStatus deckStatus(int deck) const;
@@ -139,6 +140,9 @@ class Processor
 
     std::array<std::atomic<uint32_t>, kMaxLeds> leds {};
     std::atomic<uint8_t> deckState[2]   {};
+    std::atomic<bool>    seqArmed[2]    {};
+
+    int recSource[2] = {};   // Record From, per deck
     std::atomic<float>   deckSeconds[2] {};
 
     // Clock following the host (feedClock runs inside process()).

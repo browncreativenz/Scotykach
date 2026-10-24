@@ -248,10 +248,10 @@ void TestBypass()
     CHECK(at == 10 + lat, "the bypassed impulse should arrive at %d, came at %d", 10 + lat, at);
 }
 
-/** The window's pads, as reported: Alt, Play, record 10 s, Play again and
- *  stop the input. The loop closes and plays; Play a third time stops the
- *  overdub, and the loop holds. */
-void TestEditorPads()
+/** The window, as reported: Record, record 10 s, Close loop, stop the
+ *  input. The loop plays on at its level (After Recording: Play); Record
+ *  then overdubs and stops overdubbing; Clear empties the deck. */
+void TestEditorRecord()
 {
     ScotykachAudioProcessor plugin;
     PlayHead head;
@@ -260,22 +260,23 @@ void TestEditorPads()
     plugin.prepareToPlay(kRate, kBlock);
     std::unique_ptr<juce::AudioProcessorEditor> ed(plugin.createEditor());
     auto* editor = dynamic_cast<ScotykachEditor*>(ed.get());
-    CHECK(editor != nullptr, "the window should be the pads editor");
+    CHECK(editor != nullptr, "the window should be the Scotykach editor");
     if (editor == nullptr) return;
-    auto& alt  = *editor->pad("alt");
-    auto& play = *editor->pad("a_play");
+    auto& record = *editor->pad("a_record");
+    CHECK(editor->pad("alt") == nullptr && editor->pad("spot") == nullptr, "no Alt or Spot in the window");
 
     using DS = scotykach::Processor::DeckState;
     std::vector<DS> seen;
+    std::vector<juce::String> labels;
     auto click = [&](ScotykachEditor::Pad& pd) { pd.press(); pd.release(); };   // quicker than a block
+    auto note  = [&] { editor->refresh(); seen.push_back(plugin.core().deckStatus(0).state); labels.push_back(record.getText()); };
     const auto out = Run(plugin, head, 75.0, 10.5, [&](double t, juce::MidiBuffer&) {
-        auto at = [&](double when) { return t >= when && t < when + kBlock / (double)kRate; };
-        if (at(0.5))  { click(alt); click(play); }
-        if (at(1.0))  seen.push_back(plugin.core().deckStatus(0).state);
-        if (at(10.5)) click(play);
-        if (at(11.0)) seen.push_back(plugin.core().deckStatus(0).state);
-        if (at(12.0)) { click(play); click(alt); }
-        if (at(12.5)) seen.push_back(plugin.core().deckStatus(0).state);
+        auto at = [&](double when) { return std::abs(t - when) < 0.5 * kBlock / (double)kRate; };   // one block
+        if (at(0.2))  note();                  // Empty, "Record"
+        if (at(0.5))  click(record);
+        if (at(1.0))  note();                  // Recording, "Close loop"
+        if (at(10.5)) click(record);
+        if (at(11.0)) note();                  // Playing, "Overdub"
     });
     // SCOTYKACH_SNAPSHOT=file.png saves the window as it looks now.
     if (const char* path = std::getenv("SCOTYKACH_SNAPSHOT"))
@@ -292,14 +293,88 @@ void TestEditorPads()
     }
 
     const auto st = plugin.core().deckStatus(0);
-    std::printf("  pads: states %d %d %d, loop %.2f s, rms 15-20 s %.3f, 70-75 s %.3f, alt %d\n",
-                (int)seen[0], (int)seen[1], (int)seen[2], st.seconds, Rms(out, 15, 20), Rms(out, 70, 75), alt.isOn());
-    CHECK(seen.size() == 3 && seen[0] == DS::Recording, "recording after Alt + Play (the input is playing)");
-    CHECK(seen.size() == 3 && seen[1] == DS::Overdubbing, "Play again closes the loop and overdubs");
-    CHECK(seen.size() == 3 && seen[2] == DS::Playing, "Play a third time stops the overdub");
+    std::printf("  window: states %d %d %d, labels %s / %s / %s, loop %.2f s, rms 15-20 s %.3f, 70-75 s %.3f\n",
+                (int)seen[0], (int)seen[1], (int)seen[2], labels[0].toRawUTF8(), labels[1].toRawUTF8(),
+                labels[2].toRawUTF8(), st.seconds, Rms(out, 15, 20), Rms(out, 70, 75));
+    CHECK(seen[0] == DS::Empty && labels[0] == "Record", "starts empty");
+    CHECK(seen[1] == DS::Recording && labels[1] == "Close loop", "Record records (the input is playing)");
+    CHECK(seen[2] == DS::Playing && labels[2] == "Overdub", "Close loop plays the loop, without overdubbing");
     CHECK(std::abs(st.seconds - 10.0) < 0.3, "a 10 s loop (%.2f s)", st.seconds);
-    CHECK(Rms(out, 15, 20) > 0.05 && Rms(out, 70, 75) > 0.95 * Rms(out, 15, 20), "the loop should hold its level");
-    CHECK(!alt.isOn(), "Alt latches: clicked twice, it is off");
+    CHECK(Rms(out, 15, 20) > 0.05 && Rms(out, 70, 75) > 0.97 * Rms(out, 15, 20), "the loop should hold its level");
+
+    // Overdub, Stop overdub, Clear.
+    seen.clear();
+    labels.clear();
+    Run(plugin, head, 1.5, 0.0, [&](double t, juce::MidiBuffer&) {
+        auto at = [&](double when) { return std::abs(t - when) < 0.5 * kBlock / (double)kRate; };   // one block
+        if (at(0.1)) click(record);
+        if (at(0.4)) note();                   // Overdubbing, "Stop overdub"
+        if (at(0.5)) click(record);
+        if (at(0.8)) note();                   // Playing
+        if (at(1.0)) click(*editor->pad("a_clear"));
+        if (at(1.3)) note();                   // Empty
+    });
+    CHECK(seen[0] == DS::Overdubbing && labels[0] == "Stop overdub", "Record overdubs (%d)", (int)seen[0]);
+    CHECK(seen[1] == DS::Playing, "Stop overdub plays on (%d)", (int)seen[1]);
+    CHECK(seen[2] == DS::Empty && plugin.core().deckStatus(0).seconds == 0.f, "Clear empties the deck (%d)", (int)seen[2]);
+}
+
+/** After Recording "Overdub" closes into overdubbing, as the module does. */
+void TestEditorOverdubAfter()
+{
+    ScotykachAudioProcessor plugin;
+    PlayHead head;
+    head.playing = false;
+    plugin.setPlayHead(&head);
+    plugin.prepareToPlay(kRate, kBlock);
+    std::unique_ptr<juce::AudioProcessorEditor> ed(plugin.createEditor());
+    auto& editor = *dynamic_cast<ScotykachEditor*>(ed.get());
+    editor.toggle("after_rec")->toggle();
+    CHECK(GetParam(plugin, "after_rec") == 1.f, "the switch sets Overdub");
+    auto& record = *editor.pad("a_record");
+    Run(plugin, head, 3.0, 2.5, [&](double t, juce::MidiBuffer&) {
+        auto at = [&](double when) { return std::abs(t - when) < 0.5 * kBlock / (double)kRate; };   // one block
+        if (at(0.5) || at(2.5)) { record.press(); record.release(); }
+    });
+    CHECK(plugin.core().deckStatus(0).state == scotykach::Processor::DeckState::Overdubbing,
+          "the closed loop overdubs (%d)", (int)plugin.core().deckStatus(0).state);
+}
+
+/** The lock switches follow the firmware, and an action mapped in the host
+ *  (set to 1 and left there, as Live's key mapping does) acts every time. */
+void TestEditorSwitchesAndMapping()
+{
+    ScotykachAudioProcessor plugin;
+    PlayHead head;
+    head.playing = false;
+    plugin.setPlayHead(&head);
+    plugin.prepareToPlay(kRate, kBlock);
+    std::unique_ptr<juce::AudioProcessorEditor> ed(plugin.createEditor());
+    auto& editor = *dynamic_cast<ScotykachEditor*>(ed.get());
+    auto gritOn = [&] {
+        return plugin.core().module().control([](Panel&, Core& c) { return c.deck(Deck::A).fx().is_grit_on(); });
+    };
+    auto idle = [&](double s) { Run(plugin, head, s, 0.0, [](double, juce::MidiBuffer&) {}); plugin.syncParametersToHost(); };
+
+    editor.toggle("a_grit_lock")->toggle();
+    idle(0.2);
+    CHECK(gritOn(), "Grit lock turns Grit on");
+    // Alt + Grit on the pads (the Alt parameter) unlocks it; the switch follows.
+    SetParam(plugin, "alt", 1); idle(0.05);
+    SetParam(plugin, "a_grit", 1); idle(0.05);
+    SetParam(plugin, "a_grit", 0); SetParam(plugin, "alt", 0); idle(0.2);
+    CHECK(!gritOn() && GetParam(plugin, "a_grit_lock") == 0.f && !editor.toggle("a_grit_lock")->isOn(),
+          "unlocked by the pads, the switch shows Off (%.0f)", GetParam(plugin, "a_grit_lock"));
+
+    // Record mapped to a key: each press sets it to 1, and it goes back to 0.
+    auto press = [&] { SetParam(plugin, "a_record", 1); idle(0.3); };
+    press();
+    const auto armed = plugin.core().deckStatus(0).state;
+    CHECK(GetParam(plugin, "a_record") == 0.f, "Record goes back to 0 (%.0f)", GetParam(plugin, "a_record"));
+    press();
+    const auto cancelled = plugin.core().deckStatus(0).state;
+    CHECK(armed != scotykach::Processor::DeckState::Empty && cancelled == scotykach::Processor::DeckState::Empty,
+          "two presses arm then cancel (%d, %d)", (int)armed, (int)cancelled);
 }
 
 } // namespace
@@ -318,7 +393,9 @@ int main()
     TestMidiToHost();
     TestMono();
     TestBypass();
-    TestEditorPads();
+    TestEditorRecord();
+    TestEditorOverdubAfter();
+    TestEditorSwitchesAndMapping();
     std::printf(test::Failures() ? "FAILED (%d)\n" : "ok\n", test::Failures());
     return test::Failures() != 0;
 }

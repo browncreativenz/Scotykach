@@ -37,6 +37,7 @@ constexpr Mode kModes[] = { Mode::Reel, Mode::Slice, Mode::Drift };
 constexpr Button kPressOrder[] = {
     kTap, kAlt, kGritA, kFluxA, kGritB, kFluxB,
     kPlayA, kRevA, kSeqA, kPlayB, kRevB, kSeqB, kSpot, kGateA, kGateB,
+    kRecordA, kRecordB, kClearA, kClearB, kSeqRecA, kSeqRecB, kSeqClearA, kSeqClearB,
 };
 static_assert(sizeof(kPressOrder) / sizeof(kPressOrder[0]) == kButtons, "every button once");
 
@@ -108,9 +109,23 @@ bool Processor::takeChanged(int p)
 
 void Processor::applyButton(Panel& panel, int b, bool held)
 {
-    if (b < kTap)        panel.pad(kPads[b], held);
-    else if (b == kTap)  panel.setTap(held);
-    else                 panel.setGate(b == kGateA ? Deck::A : Deck::B, held);
+    const auto ref = b % 2 == kRecordA % 2 ? Deck::A : Deck::B;   // actions alternate A, B
+    if (b < kTap)              panel.pad(kPads[b], held);
+    else if (b == kTap)        panel.setTap(held);
+    else if (b < kFirstAction) panel.setGate(b == kGateA ? Deck::A : Deck::B, held);
+    else if (held)
+    {
+        switch ((Button)b)
+        {
+            case kRecordA: case kRecordB:
+                panel.record(ref, recSource[ref] == kFromDeck);
+                break;
+            case kClearA: case kClearB:       panel.clear(ref); break;
+            case kSeqRecA: case kSeqRecB:     panel.seqRecord(ref); break;
+            case kSeqClearA: case kSeqClearB: panel.seqClear(ref); break;
+            default: break;
+        }
+    }
     applied[ButtonParam((Button)b)] = held ? 1.f : 0.f;
 }
 
@@ -142,6 +157,19 @@ void Processor::applyParameters(Panel& panel)
                 case kCvRouteA: panel.setCvRoute(Deck::A, (Panel::CvRoute)i); break;
                 case kCvRouteB: panel.setCvRoute(Deck::B, (Panel::CvRoute)i); break;
                 case kClock:    clockMode = i; break;
+                case kAfterRecording: panel.setPlayAfterRecord(i == kAfterPlay); break;
+                case kRecSourceA: recSource[0] = i; break;
+                case kRecSourceB: recSource[1] = i; break;
+                case kGritLockA: panel.setGritLock(Deck::A, i != 0); break;
+                case kGritLockB: panel.setGritLock(Deck::B, i != 0); break;
+                case kFluxLockA: panel.setFluxLock(Deck::A, i != 0); break;
+                case kFluxLockB: panel.setFluxLock(Deck::B, i != 0); break;
+                case kQuantiseA: panel.setQuantise(Deck::A, i != 0); break;
+                case kQuantiseB: panel.setQuantise(Deck::B, i != 0); break;
+                case kModSyncA:  panel.setModSync(Deck::A, i != 0); break;
+                case kModSyncB:  panel.setModSync(Deck::B, i != 0); break;
+                case kFreeSizeA: panel.setFreeSize(Deck::A, i != 0); break;
+                case kFreeSizeB: panel.setFreeSize(Deck::B, i != 0); break;
                 case kSwitches: break;
             }
         }
@@ -187,6 +215,31 @@ void Processor::readBack(Panel& panel)
         if (values[p].compare_exchange_strong(expected, fw)) changed[p].store(true);
         applied[p] = fw;
     }
+
+    // Grit and Flux locks the firmware toggled itself (Alt + Grit on the
+    // pads).
+    const struct { Switch s; bool on; } locks[] = {
+        { kGritLockA, panel.gritLocked(Deck::A) }, { kGritLockB, panel.gritLocked(Deck::B) },
+        { kFluxLockA, panel.fluxLocked(Deck::A) }, { kFluxLockB, panel.fluxLocked(Deck::B) },
+    };
+    for (const auto& l : locks)
+    {
+        const int   p  = SwitchParam(l.s);
+        const float fw = l.on ? 1.f : 0.f;
+        if (std::isnan(applied[p]) || applied[p] == fw) continue;
+        float expected = applied[p];
+        if (values[p].compare_exchange_strong(expected, fw)) changed[p].store(true);
+        applied[p] = fw;
+    }
+
+    // An action has acted: it goes back to 0, so the next press acts too.
+    for (int b = kFirstAction; b < kButtons; ++b)
+    {
+        const int p = ButtonParam((Button)b);
+        if (applied[p] < .5f) continue;
+        float expected = 1.f;
+        if (values[p].compare_exchange_strong(expected, 0.f)) changed[p].store(true);
+    }
 }
 
 void Processor::publish(Panel& panel, Core& core)
@@ -213,6 +266,7 @@ void Processor::publish(Panel& panel, Core& core)
         else                          st = DeckState::Stopped;
         const bool hasLoop = st != DeckState::Empty && st != DeckState::Armed && st != DeckState::Recording;
         deckState[d].store((uint8_t)st, std::memory_order_relaxed);
+        seqArmed[d].store(panel.seqArmed(ref), std::memory_order_relaxed);
         deckSeconds[d].store(hasLoop ? (float)((double)panel.loopFrames(ref) / Module::kSampleRate) : 0.f,
                              std::memory_order_relaxed);
     }
@@ -227,7 +281,8 @@ Processor::DeckStatus Processor::deckStatus(int deck) const
 {
     if (deck < 0 || deck > 1) return {};
     return { (DeckState)deckState[deck].load(std::memory_order_relaxed),
-             deckSeconds[deck].load(std::memory_order_relaxed) };
+             deckSeconds[deck].load(std::memory_order_relaxed),
+             seqArmed[deck].load(std::memory_order_relaxed) };
 }
 
 // ── Clock ───────────────────────────────────────────────────────────────────

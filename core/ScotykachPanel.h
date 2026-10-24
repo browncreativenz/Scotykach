@@ -125,6 +125,39 @@ class Panel
      *  Slice mode the grid is made again. 0 frames empties the deck. */
     void writeLoop(Deck::Ref, const float* interleaved, std::size_t frames);
 
+    // ── The plugin's own controls ───────────────────────────────────────────
+    // What the module does with Alt held, one control each, calling what
+    // the firmware's own pad and pot handlers call.
+
+    /** The next recording step, as Alt + Play does (Alt + Rev with
+     *  fromDeck, recording the deck's own output): arm, close the loop,
+     *  overdub, stop overdubbing. An armed deck disarms instead, dropping
+     *  a Slice recording queued for the next beat. */
+    void record(Deck::Ref, bool fromDeck);
+    /** What a deck does when its loop closes: plays (true), or plays and
+     *  goes on recording over it, as the module does (false). */
+    void setPlayAfterRecord(bool play);
+    /** Empties the deck: stops it and clears its loop, cue points and
+     *  sequence. */
+    void clear(Deck::Ref);
+    /** Alt + Seq: arms the sequencer, or disarms it. */
+    void seqRecord(Deck::Ref);
+    /** Alt + Seq held: clears the sequence. */
+    void seqClear(Deck::Ref);
+    bool seqArmed(Deck::Ref) const;
+
+    /** Alt + Grit and Alt + Flux: the effect stays on. */
+    void setGritLock(Deck::Ref, bool on);
+    void setFluxLock(Deck::Ref, bool on);
+    bool gritLocked(Deck::Ref) const;
+    bool fluxLocked(Deck::Ref) const;
+    /** Alt while turning Pitch: the speed snaps to steps. */
+    void setQuantise(Deck::Ref, bool on);
+    /** Alt while turning Mod Speed: the modulator syncs to the clock. */
+    void setModSync(Deck::Ref, bool on);
+    /** Alt while turning Size: Size isn't snapped to slices or cue points. */
+    void setFreeSize(Deck::Ref, bool on);
+
     /** Runs the LED start-up animation to its end, so CoreUI takes its
      *  factory values at the next block instead of after about 3 s. */
     void finishBoot();
@@ -133,6 +166,7 @@ class Panel
   private:
     spotykach::CoreUI&   ui;
     spotykach::Core&     core;
+    bool                 quantise[Deck::Count] = {};
     spotykach::Hardware& hw;
 
     uint8_t switches[2] = {};   // closed switches; Hardware reads the inverse

@@ -359,6 +359,61 @@ void TestQuickClicks()
     CHECK(std::abs(tempo - 150) < 1.0, "quick taps should set the tempo (%.2f)", tempo);
 }
 
+/** The Record, Clear and sequencer actions, in Slice mode on the internal
+ *  clock: Record arms for the next beat, a second press cancels (nothing
+ *  records at the beat), and the actions go back to 0 by themselves. */
+void TestActions()
+{
+    Processor p;
+    std::vector<float> l(480), r(480);
+    auto run = [&](double s, float level) {
+        for (int i = 0; i < (int)(s * 100); ++i)
+        {
+            for (int k = 0; k < 480; ++k) l[k] = r[k] = level * std::sin((float)k * 0.05f);
+            p.process(l.data(), r.data(), l.data(), r.data(), 480, {});
+        }
+    };
+    auto act = [&](Button b) { p.setParameter(ButtonParam(b), 1.f); run(0.05, .3f); };
+    using DS = Processor::DeckState;
+    p.setParameter(SwitchParam(kClock), (float)kClockInternal);
+    p.setParameter(SwitchParam(kModeA), 1.f);   // Slice
+    run(0.2, .3f);
+
+    act(kRecordA);
+    const auto armed = p.deckStatus(0).state;
+    CHECK(p.getParameter(ButtonParam(kRecordA)) == 0.f, "Record goes back to 0");
+    act(kRecordA);
+    run(1.5, .3f);   // three beats at 120 BPM
+    CHECK((armed == DS::Armed || armed == DS::Recording) && p.deckStatus(0).state == DS::Empty,
+          "Slice: Record arms, a second press cancels and nothing records (%d, %d)", (int)armed, (int)p.deckStatus(0).state);
+
+    act(kRecordA);
+    run(2.0, .3f);
+    act(kRecordA);
+    run(1.0, .3f);
+    const auto st = p.deckStatus(0);
+    std::printf("  actions: Slice loop %.2f s, state %d\n", st.seconds, (int)st.state);
+    CHECK(st.state == DS::Playing && st.seconds > 1.4f, "Slice: a loop records and plays (%d, %.2f s)", (int)st.state, st.seconds);
+
+    act(kSeqRecA);
+    CHECK(StateOf(p).trackArmed && p.deckStatus(0).seqArmed, "Seq Rec arms the sequencer");
+    act(kSeqRecA);
+    CHECK(!StateOf(p).trackArmed, "and disarms it");
+
+    act(kClearA);
+    CHECK(p.deckStatus(0).state == DS::Empty && StateOf(p).recSize == 0, "Clear empties the deck");
+
+    // After Recording: Overdub keeps the module's behaviour.
+    p.setParameter(SwitchParam(kAfterRecording), (float)kAfterOverdub);
+    p.setParameter(SwitchParam(kModeA), 0.f);   // Reel
+    run(0.1, .3f);
+    act(kRecordA);
+    run(1.0, .3f);
+    act(kRecordA);
+    run(0.2, .3f);
+    CHECK(p.deckStatus(0).state == DS::Overdubbing, "After Recording Overdub: the loop overdubs (%d)", (int)p.deckStatus(0).state);
+}
+
 } // namespace
 
 int main()
@@ -377,6 +432,7 @@ int main()
     TestHostJump();
     TestFxHoldAndLock();
     TestQuickClicks();
+    TestActions();
     std::printf(test::Failures() ? "FAILED (%d)\n" : "ok\n", test::Failures());
     return test::Failures() != 0;
 }

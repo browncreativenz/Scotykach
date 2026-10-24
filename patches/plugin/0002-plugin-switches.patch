@@ -1,0 +1,91 @@
+diff --git a/src/ui/core.ui.h b/src/ui/core.ui.h
+--- a/src/ui/core.ui.h
++++ b/src/ui/core.ui.h
+@@ -249,6 +249,10 @@
+     };
+     std::bitset<TouchedOptions> _touched;
+     std::bitset<Deck::Ref::Count> _pitch_quantized;
++    // Desktop (Scotykach): the plugin's Mod Sync and Free Size switches, which
++    // do what holding Alt while turning Mod Speed or Size does on the module.
++    std::bitset<Deck::Ref::Count> _plugin_mod_sync;
++    std::bitset<Deck::Ref::Count> _plugin_size_alt;
+ 
+     std::array<Deck::Direction, Deck::Ref::Count> _ply_cue;
+     std::array<Deck::Source, Deck::Ref::Count> _rec_cue;
+diff --git a/src/ui/core.ui.cpp b/src/ui/core.ui.cpp
+--- a/src/ui/core.ui.cpp
++++ b/src/ui/core.ui.cpp
+@@ -131,7 +131,7 @@
+         
+         if (_pos[ref].apply()) deck.voxs().set_start(_pos[ref].value());
+         if (_pos_offset[ref].apply()) deck.voxs().set_start_offset_interval(_pos_offset[ref].value());
+-        if (_size[ref].apply()) deck.voxs().set_size(_size[ref].value(), _touched.test(Alt));
++        if (_size[ref].apply()) deck.voxs().set_size(_size[ref].value(), _touched.test(Alt) || _plugin_size_alt.test(ref));
+         if (_env[ref].apply()) deck.voxs().set_shape(_env[ref].value());
+         if (_speed[ref].apply()) {
+             auto speed = _speed[ref].value();
+@@ -156,7 +156,7 @@
+         if (_grit_mix[ref].apply()) deck.fx().grit().set_mix(_grit_mix[ref].value());
+         if (_grit_char[ref].apply()) deck.fx().grit().set_character(_grit_char[ref].value());
+ 
+-        if (_mod_speed[ref].apply()) _core.mod(ref).set_speed_norm(_mod_speed[ref].value(), _touched.test(Alt));
++        if (_mod_speed[ref].apply()) _core.mod(ref).set_speed_norm(_mod_speed[ref].value(), _touched.test(Alt) || _plugin_mod_sync.test(ref));
+         if (_mod_amp[ref].apply()) _core.mod(ref).set_amp_norm(_mod_amp[ref].value());
+ 
+         if (_hold_clear[ref].process()) {
+diff --git a/src/core/fx/fx.h b/src/core/fx/fx.h
+--- a/src/core/fx/fx.h
++++ b/src/core/fx/fx.h
+@@ -28,6 +28,7 @@
+     bool is_grit_on() const { return _grit_switch.is_on(); }
+     void set_grit_on(const bool);
+     void toggle_grit_lock();
++    bool is_grit_locked() const { return _grit_lock; }   // Desktop (Scotykach): for the plugin's Grit Lock switch
+ 
+     // FLUX ///////////////////////////////////////////
+     Flux& flux() { return _flux; }
+@@ -35,6 +36,7 @@
+     bool is_flux_on() const { return _flux_switch.is_on(); }
+     void set_flux_on(const bool);
+     void toggle_flux_lock();
++    bool is_flux_locked() const { return _flux_lock; }   // Desktop (Scotykach): for the plugin's Flux Lock switch
+ 
+ private:
+     NOCOPY(Fx)
+diff --git a/src/core/deck.h b/src/core/deck.h
+--- a/src/core/deck.h
++++ b/src/core/deck.h
+@@ -78,6 +78,11 @@
+     bool is_armed() const { return _is_armed; }
+     void toggle_recording();
+     void disarm() { _set_buf_armed(false); }
++    // Desktop (Scotykach): the plugin's Cancel, which also drops a Slice
++    // recording queued for the next beat, and its After Recording "Play",
++    // with which a loop that closes plays without overdubbing.
++    void cancel_record() { _is_record_queued = false; _set_buf_armed(false); }
++    void set_play_after_record(const bool on) { _plugin_play_after_record = on; }
+     bool is_recording() const { return _buffer.is_recording(); }
+     bool is_overdubbing() const { return is_playing() && is_recording(); }
+     bool is_empty() const { return _buffer.is_empty(); }
+@@ -198,5 +203,6 @@
+     bool _is_playing;
+     bool _adjust_count;
+     bool _is_cut_queued;
++    bool _plugin_play_after_record = false;   // Desktop (Scotykach)
+ };
+ };
+diff --git a/src/core/deck.cpp b/src/core/deck.cpp
+--- a/src/core/deck.cpp
++++ b/src/core/deck.cpp
+@@ -423,6 +423,11 @@
+             case Mode::Slice: make_grid(); _is_play_queued = true; break;
+             default: _play(); break;
+         }
++        // Desktop (Scotykach): After Recording "Play".
++        if (_plugin_play_after_record) {
++            _is_armed = false;
++            _stop_recording();
++        }
+     }
+ }
+ void Deck::set_inout_mix(const float val) {

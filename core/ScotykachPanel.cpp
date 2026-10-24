@@ -94,7 +94,7 @@ void Panel::set(Deck::Ref ref, Control c, float value)
             // With Alt held, CoreUI snaps the speed to its steps.
             mv = &ui._speed[ref];
             mv->set(v);
-            ui._pitch_quantized.set(ref, ui._touched.test(CoreUI::Alt));
+            ui._pitch_quantized.set(ref, ui._touched.test(CoreUI::Alt) || quantise[ref]);
             break;
 
 #define SCOTYKACH_SET(name, member) \
@@ -319,6 +319,78 @@ void Panel::writeLoop(Deck::Ref ref, const float* in, std::size_t frames)
     for (std::size_t i = 0; i < frames; ++i) raw[i] = { in[2 * i], in[2 * i + 1] };
     buf.set_rec_size(frames);
     if (deck.mode() == Mode::Slice) deck.make_grid();
+}
+
+// ── The plugin's own controls ───────────────────────────────────────────────
+
+void Panel::record(Deck::Ref ref, bool fromDeck)
+{
+    auto& deck = core.deck(ref);
+    if (deck.is_armed() && !deck.is_recording()) { deck.cancel_record(); return; }
+    // CoreUI::_on_play_touch with Alt held; CoreUI::process acts on it.
+    ui._rec_cue[ref] = fromDeck ? Deck::Source::internal : Deck::Source::external;
+}
+
+void Panel::setPlayAfterRecord(bool play)
+{
+    for (auto ref : { Deck::A, Deck::B }) core.deck(ref).set_play_after_record(play);
+}
+
+void Panel::clear(Deck::Ref ref)
+{
+    writeLoop(ref, nullptr, 0);   // stops, disarms, empties
+    core.deck(ref).voxs().clear_cue();
+    core.deck(ref).clear_sequence();
+}
+
+void Panel::seqRecord(Deck::Ref ref)
+{
+    // CoreUI::_on_pad_touch, Seq with Alt held.
+    auto& t = core.deck(ref).track();
+    if (t.is_armed()) t.disarm();
+    else t.arm(!core.driver().is_key_sub_quarter());
+}
+
+void Panel::seqClear(Deck::Ref ref) { core.deck(ref).clear_sequence(); }
+
+bool Panel::seqArmed(Deck::Ref ref) const
+{
+    auto& t = core.deck(ref).track();
+    return t.is_armed() || t.is_recording();
+}
+
+void Panel::setGritLock(Deck::Ref ref, bool on)
+{
+    auto& fx = core.deck(ref).fx();
+    if (fx.is_grit_locked() != on) fx.toggle_grit_lock();
+}
+
+void Panel::setFluxLock(Deck::Ref ref, bool on)
+{
+    auto& fx = core.deck(ref).fx();
+    if (fx.is_flux_locked() != on) fx.toggle_flux_lock();
+}
+
+bool Panel::gritLocked(Deck::Ref ref) const { return core.deck(ref).fx().is_grit_locked(); }
+bool Panel::fluxLocked(Deck::Ref ref) const { return core.deck(ref).fx().is_flux_locked(); }
+
+void Panel::setQuantise(Deck::Ref ref, bool on)
+{
+    quantise[ref] = on;
+    ui._pitch_quantized.set(ref, on);
+    ui._speed[ref].set_apply();   // the speed snaps (or not) now
+}
+
+void Panel::setModSync(Deck::Ref ref, bool on)
+{
+    ui._plugin_mod_sync.set(ref, on);
+    ui._mod_speed[ref].set_apply();
+}
+
+void Panel::setFreeSize(Deck::Ref ref, bool on)
+{
+    ui._plugin_size_alt.set(ref, on);
+    ui._size[ref].set_apply();
 }
 
 void Panel::finishBoot()
