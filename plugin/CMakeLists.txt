@@ -21,7 +21,7 @@ juce_add_plugin(Scotykach
     AU_MAIN_TYPE                kAudioUnitType_MusicEffect
     COPY_PLUGIN_AFTER_BUILD     ${SCOTYKACH_COPY_PLUGIN})
 
-target_sources(Scotykach PRIVATE PluginProcessor.cpp)
+target_sources(Scotykach PRIVATE PluginProcessor.cpp PluginEditor.cpp)
 
 target_compile_definitions(Scotykach PUBLIC
     JUCE_WEB_BROWSER=0

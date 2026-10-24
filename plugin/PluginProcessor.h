@@ -28,7 +28,8 @@
 #include "ScotykachProcessor.h"
 
 class ScotykachAudioProcessor : public juce::AudioProcessor,
-                                private juce::Timer
+                                private juce::Timer,
+                                private juce::AudioProcessorParameter::Listener
 {
   public:
     ScotykachAudioProcessor();
@@ -80,6 +81,11 @@ class ScotykachAudioProcessor : public juce::AudioProcessor,
     static juce::AudioProcessorValueTreeState::ParameterLayout CreateLayout();
 
     void timerCallback() override { syncParametersToHost(); }
+
+    /* Buttons go to the processor as they change, not once a block, so a
+     * click released before the next block still presses. */
+    void parameterValueChanged(int index, float value) override;
+    void parameterGestureChanged(int, bool) override {}
 
     /** Passes host parameter changes to the processor. */
     void PushParameters();

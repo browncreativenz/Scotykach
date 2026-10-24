@@ -5,6 +5,7 @@
  *        and parameters the firmware moves itself.
  */
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -307,6 +308,57 @@ void TestFxHoldAndLock()
     CHECK(gritOn(lock, 0.8), "Alt + Grit should lock it on");
 }
 
+/** Clicks shorter than a host block: pressed and released between two
+ *  process() calls, they still reach the firmware. */
+void TestQuickClicks()
+{
+    Processor p;
+    std::vector<float> l(2048), r(2048);
+    auto block = [&] {
+        std::fill(l.begin(), l.end(), 0.f);
+        std::fill(r.begin(), r.end(), 0.f);
+        p.process(l.data(), r.data(), l.data(), r.data(), 2048, {});
+    };
+    auto click = [&](Button b) { p.setParameter(ButtonParam(b), 1.f); p.setParameter(ButtonParam(b), 0.f); };
+
+    block();
+    CHECK(p.deckStatus(0).state == Processor::DeckState::Empty, "deck A starts empty");
+    p.setParameter(ButtonParam(kAlt), 1.f);
+    click(kPlayA);
+    p.setParameter(ButtonParam(kAlt), 0.f);
+    for (int i = 0; i < 3; ++i) block();
+    CHECK(StateOf(p).armed, "Alt + Play, both quicker than a block, should arm deck A");
+    CHECK(p.deckStatus(0).state == Processor::DeckState::Armed, "deck A status %d", (int)p.deckStatus(0).state);
+
+    // Digital silence keeps it waiting, as the module's noisy input does;
+    // sound starts the recording.
+    for (int i = 0; i < 25; ++i) block();   // 1 s
+    CHECK(p.deckStatus(0).state == Processor::DeckState::Armed, "still armed after 1 s of silence (%d)", (int)p.deckStatus(0).state);
+    for (int k = 0; k < 2048; ++k) l[k] = r[k] = 0.3f * std::sin((float)k * 0.06f);
+    p.process(l.data(), r.data(), l.data(), r.data(), 2048, {});
+    p.process(l.data(), r.data(), l.data(), r.data(), 2048, {});
+    CHECK(p.deckStatus(0).state == Processor::DeckState::Recording, "sound starts the recording (%d)", (int)p.deckStatus(0).state);
+
+    bool lit = false;
+    for (int i = 0; i < Processor::kMaxLeds; ++i) lit |= p.led(i) != 0;
+    CHECK(lit, "the LEDs should be published");
+
+    // Tap tempo from quick clicks, 0.4 s apart: 150 BPM.
+    Processor t;
+    t.setParameter(SwitchParam(kClock), (float)kClockInternal);
+    auto tblock = [&] { t.process(l.data(), r.data(), l.data(), r.data(), 480, {}); };
+    for (int i = 0; i < 10; ++i) tblock();
+    for (int tap = 0; tap < 6; ++tap)
+    {
+        t.setParameter(ButtonParam(kTap), 1.f);
+        t.setParameter(ButtonParam(kTap), 0.f);
+        for (int i = 0; i < 40; ++i) tblock();   // 0.4 s
+    }
+    const auto tempo = StateOf(t).tempo;
+    std::printf("  quick clicks: deck A armed, tapped tempo %.2f\n", tempo);
+    CHECK(std::abs(tempo - 150) < 1.0, "quick taps should set the tempo (%.2f)", tempo);
+}
+
 } // namespace
 
 int main()
@@ -324,6 +376,7 @@ int main()
     TestInstances();
     TestHostJump();
     TestFxHoldAndLock();
+    TestQuickClicks();
     std::printf(test::Failures() ? "FAILED (%d)\n" : "ok\n", test::Failures());
     return test::Failures() != 0;
 }

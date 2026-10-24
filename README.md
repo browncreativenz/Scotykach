@@ -9,8 +9,8 @@ a two-deck looping and granular instrument.
 Milestones S0 to S2 of [the plan](docs/PLAN.md) are done: the whole
 firmware (v1.3.1), its audio engine and its own UI code, runs as a VST3, AU
 and Standalone plugin. It passes `pluginval` at its strictest level and
-`auval`. The window is JUCE's generic one for now (a panel-style window is
-S4); trying it in Live on a Mac is next.
+`auval`. The window has the module's pads, lit as its LEDs are, above a
+list of every parameter (a panel-style window is S4).
 
 - Reel, Slice and Drift record and loop, played with the module's own
   gestures: Alt+Play records, Alt+Seq arms the sequencer and holding Seq
@@ -71,14 +71,24 @@ After installing, rescan plug-ins (Settings > Plug-Ins > Rescan). Scotykach
 is under Plug-Ins, by browncreativenz, as a VST3 and an AU. Put it on an
 audio track: that track's audio is what the decks record.
 
-- **Recording:** hold **Alt** and press **A Play** (or B): the deck arms,
-  and recording starts at the next sound (Reel, Drift) or the next beat
-  (Slice). Do it again to close the loop; it plays on, overdubbing. **A
-  Play** alone starts and stops it, **A Rev** plays it backwards.
-- **Pads and buttons are parameters** (A Play, A Rev, A Grit, A Flux,
-  A Seq, likewise B, Spot, Alt, Tap). They are held while on. MIDI-map them
-  to a pad controller with Cmd-M, so you can hold Alt and press Play as on
-  the module.
+- **The window:** the pads at the top work like the module's: each is
+  pressed while the mouse button is down. **Alt** is the exception: one
+  click turns it on (it lights), another turns it off, since the mouse
+  can't hold Alt and click Play at once. Each pad shows its LED, each deck
+  its LED ring, and a line under each deck says what it is doing.
+- **Recording:** turn **Alt** on and click **Play**: the deck arms, and
+  recording starts at the next sound (Reel, Drift) or the next beat
+  (Slice). Click **Play** again to close the loop: it plays, and keeps
+  overdubbing whatever comes in, each pass a little quieter (A Feedback,
+  0.95 by default, as on the module). Click **Play** a third time to stop
+  overdubbing; the loop then holds. Turn **Alt** off. **Play** alone starts
+  and stops the loop, **Rev** plays it backwards. A deck holds up to 42 s;
+  a recording that runs that long closes the loop itself.
+- **Pads and buttons are also parameters** (A Play, A Rev, A Grit, A Flux,
+  A Seq, likewise B, Spot, Alt, Tap), held while on. In the list below the
+  pads they are on/off switches, and a pad acts only when switched on, so
+  use the pads above them. To play them from a pad controller, map them
+  with Cmd-M (add them to Live's device panel with Configure first).
 - **Every knob, layers included,** is its own parameter: A Feedback (SOS
   with Alt), A Grit Mix (SOS with Grit held), Tempo (Mod Freq with Tap
   held) and so on. Each automates and maps on its own.

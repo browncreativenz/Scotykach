@@ -5,6 +5,7 @@
 
 #include "ScotykachProcessor.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -25,6 +26,8 @@ constexpr Pad kPads[] = {
     Pad::Spot,  Pad::Alt,
 };
 static_assert(sizeof(kPads) / sizeof(kPads[0]) == kTap, "a pad for every pad button");
+
+static_assert(Hardware::kNumLeds <= Processor::kMaxLeds, "room for every LED");
 
 constexpr Mode kModes[] = { Mode::Reel, Mode::Slice, Mode::Drift };
 
@@ -85,7 +88,10 @@ void Processor::prepare(double rate)
 
 void Processor::setParameter(int p, float value)
 {
-    if (p >= 0 && p < kCount) values[p].store(Clamp(p, value));
+    if (p < 0 || p >= kCount) return;
+    const float v   = Clamp(p, value);
+    const float was = values[p].exchange(v);
+    if (p >= kButtonBase && v >= .5f && was < .5f) presses[(size_t)(p - kButtonBase)].fetch_add(1);
 }
 
 float Processor::getParameter(int p) const
@@ -142,13 +148,24 @@ void Processor::applyParameters(Panel& panel)
         applied[p] = v;
     }
 
+    // A button pressed since the last block is pressed now even if it was
+    // released again meanwhile, and stays down until the module has run a
+    // block: the firmware reads Tap and the gates once per block.
     for (Button b : kPressOrder)
-        if (values[ButtonParam(b)].load() >= .5f && applied[ButtonParam(b)] < .5f)
+    {
+        const uint32_t n      = presses[b].load();
+        const bool     tapped = n != seenPresses[b];
+        seenPresses[b] = n;
+        if ((values[ButtonParam(b)].load() >= .5f || tapped) && applied[ButtonParam(b)] < .5f)
+        {
             applyButton(panel, b, true);
+            heldUntil[b] = mod->blocks() + 1;
+        }
+    }
     for (int i = kButtons - 1; i >= 0; --i)
     {
         const Button b = kPressOrder[i];
-        if (values[ButtonParam(b)].load() < .5f && applied[ButtonParam(b)] >= .5f)
+        if (values[ButtonParam(b)].load() < .5f && applied[ButtonParam(b)] >= .5f && mod->blocks() >= heldUntil[b])
             applyButton(panel, b, false);
     }
 }
@@ -170,6 +187,47 @@ void Processor::readBack(Panel& panel)
         if (values[p].compare_exchange_strong(expected, fw)) changed[p].store(true);
         applied[p] = fw;
     }
+}
+
+void Processor::publish(Panel& panel, Core& core)
+{
+    const auto& shown = mod->hardware().leds.shown();
+    for (size_t i = 0; i < Hardware::kNumLeds; ++i)
+    {
+        const auto  px = shown[i];
+        const float b  = std::clamp(px.brightness, 0.f, 1.f);
+        const auto  ch = [&](int shift) { return (uint32_t)std::lround((float)((px.color >> shift) & 0xFF) * b); };
+        leds[i].store(ch(16) << 16 | ch(8) << 8 | ch(0), std::memory_order_relaxed);
+    }
+
+    for (int d = 0; d < 2; ++d)
+    {
+        const auto  ref  = d == 0 ? Deck::A : Deck::B;
+        const auto& deck = core.deck(ref);
+        DeckState st;
+        if (deck.is_overdubbing())   st = DeckState::Overdubbing;
+        else if (deck.is_recording()) st = DeckState::Recording;
+        else if (deck.is_armed())     st = DeckState::Armed;
+        else if (deck.is_empty())     st = DeckState::Empty;
+        else if (deck.is_playing())   st = DeckState::Playing;
+        else                          st = DeckState::Stopped;
+        const bool hasLoop = st != DeckState::Empty && st != DeckState::Armed && st != DeckState::Recording;
+        deckState[d].store((uint8_t)st, std::memory_order_relaxed);
+        deckSeconds[d].store(hasLoop ? (float)((double)panel.loopFrames(ref) / Module::kSampleRate) : 0.f,
+                             std::memory_order_relaxed);
+    }
+}
+
+uint32_t Processor::led(int index) const
+{
+    return index >= 0 && index < kMaxLeds ? leds[(size_t)index].load(std::memory_order_relaxed) : 0;
+}
+
+Processor::DeckStatus Processor::deckStatus(int deck) const
+{
+    if (deck < 0 || deck > 1) return {};
+    return { (DeckState)deckState[deck].load(std::memory_order_relaxed),
+             deckSeconds[deck].load(std::memory_order_relaxed) };
 }
 
 // ── Clock ───────────────────────────────────────────────────────────────────
@@ -283,7 +341,10 @@ void Processor::process(const float* inL, const float* inR, float* outL, float* 
     }
     runSegment(inL + pos, inR + pos, outL + pos, outR + pos, n - pos);
 
-    mod->control([&](Panel& panel, Core&) { readBack(panel); });
+    mod->control([&](Panel& panel, Core& core) {
+        readBack(panel);
+        publish(panel, core);
+    });
     hostSamples += n;
 }
 

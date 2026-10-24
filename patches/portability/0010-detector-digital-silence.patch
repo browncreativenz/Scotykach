@@ -1,0 +1,16 @@
+diff --git a/src/core/detector.cpp b/src/core/detector.cpp
+--- a/src/core/detector.cpp
++++ b/src/core/detector.cpp
+@@ -93,7 +93,11 @@
+       auto db_average = 20.f * daisysp::fastlog10f(_average);
+ 
+       // If average exceedes the treshold open the gate
+-      if (db_average >= _db_threshold) {
++      // Desktop (Scotykach): fastlog10f(0) is about -0.9 dB, so a window of
++      // digital silence would open the gate. The module's input always
++      // carries some noise and never averages exactly 0; a DAW's silent
++      // track does. Silence keeps the gate shut, as on the module.
++      if (_average > 0.f && db_average >= _db_threshold) {
+         _read_head = 0;
+         _is_open = true;
+       }

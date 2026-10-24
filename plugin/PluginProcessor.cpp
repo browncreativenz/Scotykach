@@ -8,6 +8,7 @@
 #include <cmath>
 #include <limits>
 
+#include "PluginEditor.h"
 #include "ScotykachModule.h"
 
 namespace params = scotykach::params;
@@ -42,6 +43,8 @@ ScotykachAudioProcessor::ScotykachAudioProcessor()
         hostParams[(size_t)p] = parameters.getParameter(info.id);
         pushed[(size_t)p]     = info.defaultValue;
         jassert(raw[(size_t)p] != nullptr && hostParams[(size_t)p] != nullptr);
+        jassert(hostParams[(size_t)p]->getParameterIndex() == p);
+        if (info.kind == params::Kind::Button) hostParams[(size_t)p]->addListener(this);
     }
     startTimerHz(30);
 }
@@ -49,6 +52,13 @@ ScotykachAudioProcessor::ScotykachAudioProcessor()
 ScotykachAudioProcessor::~ScotykachAudioProcessor()
 {
     stopTimer();
+    for (int p = 0; p < params::kCount; ++p)
+        if (params::Get(p).kind == params::Kind::Button) hostParams[(size_t)p]->removeListener(this);
+}
+
+void ScotykachAudioProcessor::parameterValueChanged(int index, float value)
+{
+    if (index >= 0 && index < params::kCount) processor.setParameter(index, value >= .5f ? 1.f : 0.f);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout ScotykachAudioProcessor::CreateLayout()
@@ -218,7 +228,7 @@ void ScotykachAudioProcessor::processBlockBypassed(juce::AudioBuffer<float>& buf
 
 juce::AudioProcessorEditor* ScotykachAudioProcessor::createEditor()
 {
-    return new juce::GenericAudioProcessorEditor(*this);
+    return new ScotykachEditor(*this);
 }
 
 void ScotykachAudioProcessor::getStateInformation(juce::MemoryBlock& destData)

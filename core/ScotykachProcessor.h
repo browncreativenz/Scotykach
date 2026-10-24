@@ -9,7 +9,9 @@
  *   - Parameters (ScotykachParams.h): set from any thread; applied at the
  *     start of each host block, and land at the next 96-sample module block.
  *     Buttons changing in the same block are pressed modifiers first (Tap,
- *     Alt, Grit, Flux, then the rest) and released in the reverse order.
+ *     Alt, Grit, Flux, then the rest) and released in the reverse order. A
+ *     press is held for at least one module block, so one shorter than a
+ *     host block (a quick click) still reaches the firmware.
  *     When the firmware changes a value itself (tap tempo, a MIDI CC, Size
  *     fitting the tempo), the parameter follows and takeChanged() reports it.
  *   - MIDI: messages go to the module's USB MIDI port at their sample
@@ -29,8 +31,11 @@
  *     fakes a beat when the source changed under 4 ms before, which would
  *     put every beat a 16th early.
  *
- * Not thread-safe except setParameter/getParameter/takeChanged: call the
- * rest from the audio thread (or one thread).
+ *   - The window: led() and deckStatus() report what the module's LEDs and
+ *     decks showed at the end of the last process() call.
+ *
+ * Not thread-safe except setParameter/getParameter/takeChanged, led and
+ * deckStatus: call the rest from the audio thread (or one thread).
  */
 
 #pragma once
@@ -42,6 +47,8 @@
 
 #include "RateBridge.h"
 #include "ScotykachParams.h"
+
+namespace spotykach { class Core; }
 
 namespace scotykach {
 
@@ -91,10 +98,26 @@ class Processor
     /** The module, for tests and the plugin window. */
     Module& module() { return *mod; }
 
+    /** One LED as the module last showed it, brightness applied: 0xRRGGBB.
+     *  Indexes are Hardware::LedId. Any thread. */
+    static constexpr int kMaxLeds = 128;
+    uint32_t led(int index) const;
+
+    /** What a deck is doing, as its Play LED tells on the module. */
+    enum class DeckState : uint8_t { Empty, Armed, Recording, Overdubbing, Playing, Stopped };
+    struct DeckStatus
+    {
+        DeckState state   = DeckState::Empty;
+        float     seconds = 0.f;   // the loop's length (0 while empty or armed)
+    };
+    /** Deck 0 is A, 1 is B. Any thread. */
+    DeckStatus deckStatus(int deck) const;
+
   private:
     void applyParameters(Panel&);
     void applyButton(Panel&, int button, bool held);
     void readBack(Panel&);
+    void publish(Panel&, spotykach::Core&);
     void beginTransport(Panel&, const Transport&, int n);
     double hostTimeOf(uint64_t moduleSample) const;
     void feedClock(uint64_t blockStart, Panel&);
@@ -107,6 +130,16 @@ class Processor
     std::array<std::atomic<float>, params::kCount> values;
     std::array<std::atomic<bool>,  params::kCount> changed;
     std::array<float,              params::kCount> applied;
+
+    // Presses counted as they are set, so a press and release between two
+    // blocks still presses; heldUntil keeps it down for a module block.
+    std::array<std::atomic<uint32_t>, params::kButtons> presses {};
+    std::array<uint32_t,              params::kButtons> seenPresses {};
+    std::array<uint64_t,              params::kButtons> heldUntil {};
+
+    std::array<std::atomic<uint32_t>, kMaxLeds> leds {};
+    std::atomic<uint8_t> deckState[2]   {};
+    std::atomic<float>   deckSeconds[2] {};
 
     // Clock following the host (feedClock runs inside process()).
     enum class HostClock { Off, Waiting, Locked };

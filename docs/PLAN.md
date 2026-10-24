@@ -136,6 +136,7 @@ configuring stops and names it. Each changed line carries a
 | `portability/0007-phasor-saturating` | `Phasor`, the voices' fixed-point playhead, converts float to int counting on the module's saturating `VCVT` (its own comment says so); far-out positions were undefined here |
 | `portability/0008-led-ring-saturating` | The LED ring converts ring positions to integers the same way; positions far outside the ring were undefined here |
 | `portability/0009-mod-sync-index` | With Alt held, Mod Speed at 1 indexes the sync table at -1.0, which the module converts to 0 and x86 to an index past the table |
+| `portability/0010-detector-digital-silence` | The detector that starts a Reel or Drift recording "at the next sound" opened on exact digital silence (DaisySP's `fastlog10f(0)` is about -0.9 dB, above the -40 dB threshold). The module's input always carries some noise; a DAW's silent track is exact zeros, so an armed deck started recording at once. Silence now keeps it waiting |
 | `fixes/0001-led-ring-long-segment` | A loop shorter than the shortest slice (1344 samples) makes the ring's segment several rings long; from 128 LEDs on, an `int8_t` loop counter can never reach the end and the main loop freezes. Stops at one ring, which lights the LEDs exactly as before |
 | `fixes/0002-led-ring-negative-position` | The ring wraps negative positions by adding 1 until positive, which never ends once a position is so negative that adding 1 changes nothing (a voice in a loop a few samples long). Subtracting the floor gives the same result and ends |
 | `fixes/0003-midi-cc-other-channels` | A CC on a channel neither deck listens on indexed `deck(2)`, past the two decks, and wrote into the memory after them. Deck CCs on other channels are ignored now; the crossfader, which belongs to no deck, still works on every channel |
@@ -217,6 +218,25 @@ reports nothing.
   120 under the sanitizers on every push.
 - **The plugin passes `pluginval` at its strictest level (10)**, editor
   tests included, on Linux (CI runs it there and on macOS, with `auval`).
+
+### What the first try in Live found
+
+- **On/off switches don't make pads.** The generic window shows the pads
+  as switches, and a pad acts only when it goes on, so "Alt on, Play on,
+  then Play off and Alt off" armed the deck and never closed the loop; it
+  recorded until the deck was full (42 s) and closed it there. The window
+  now has the module's pads, pressed while the mouse is down, with Alt
+  latching, each lit with its LED and each deck's state written under it.
+- **A click shorter than a host block** used to be lost between blocks.
+  The processor now counts presses as they are set and holds each for at
+  least one module block (the firmware reads Tap and the gates once per
+  block); the plugin passes button changes on as they happen.
+- **Closing a loop starts overdubbing**, which fades the loop by A
+  Feedback (0.95, -0.15 dB a pass) when nothing comes in: a third Alt +
+  Play stops the overdub. This is the module's own behaviour; the window
+  and README now say so.
+- **The recording detector opened on digital silence** (portability
+  0010).
 
 ### Timing: one firmware "tick" per 96 samples
 
@@ -335,7 +355,7 @@ host block there.
 |---|---|---|---|
 | S0 ✅ | Submodules; patches; `shim/` with heap pool and sample clock; firmware `src/core` built into `scotykach_fw`; `ScotykachEngine`; `scotykach_render` with scripted actions; CTest scenarios; CI on Linux (GCC, Clang, sanitizers) and macOS | Cloud session | Reel, Slice and Drift record and loop; output is identical whatever the host block size; engines are independent in one process; the instance patch changes no output; no sanitizer reports |
 | S1 ✅ | Desktop `Hardware` (overlay); firmware `CoreUI`, `CoreMIDI`, `Storage` and `Settings` running, with patches for the UI's statics and the panel hook; `ScotykachModule`, `ScotykachPanel`, the parameter table; `ScotykachProcessor` with rate bridge, MIDI at sample offsets and Live clock sync; the renderer on the processor | Cloud session | The module matches the engine alone; gestures work (Alt+Play record, hold to clear, Grit hold and lock, tap tempo, Pitch quantise, Size fits tempo); Slice locks to a simulated host transport; 44.1–96 kHz; block-size independent; instances independent; no sanitizer reports |
-| S2 ✅ | JUCE plugin (VST3, AU, Standalone) with the generic editor; the 70 parameters, with firmware changes sent back to the host; the host's playhead as the transport; MIDI in at its sample; state with both loops at full quality; latency-matched bypass; the stress test and three firmware fixes; CI with `auval` and `pluginval` on macOS, `pluginval` on Linux | Cloud session; your Mac for Live | `pluginval` strictness 10 and `auval` pass; plugin tests pass (record with the pads, the clock on the host's tempo, MIDI CC back to the host, state round trip with the loop, mono input, bypass). In Live: still to try on your Mac |
+| S2 ✅ | JUCE plugin (VST3, AU, Standalone) with a pads window (momentary pads, latching Alt, the module's LEDs and deck state) above the generic parameter list; the 70 parameters, with firmware changes sent back to the host; the host's playhead as the transport; MIDI in at its sample; state with both loops at full quality; latency-matched bypass; the stress test and three firmware fixes; CI with `auval` and `pluginval` on macOS, `pluginval` on Linux | Cloud session; your Mac for Live | `pluginval` strictness 10 and `auval` pass; plugin tests pass (record with the pads, the clock on the host's tempo, MIDI CC back to the host, state round trip with the loop, mono input, bypass). In Live: still to try on your Mac |
 | S3 | Gate outs, LFO outs and clock out as MIDI on a "Scotykach 1" virtual port, using the MIDI-out code copied from Capicola | Cloud plus your Mac | Gate notes play a Drum Rack; LFO CCs MIDI-map in Live |
 | S4 | The plugin window, from a mockup you approve first: 12 pads, two 32-LED rings drawn from the firmware's own LED output, pots, switches, crossfader | Cloud session builds it and renders screenshots; your Mac for feel | Looks like the mockup, and the LEDs match the module |
 | S5 (optional) | WAV import and export of loops (the firmware has `memory/wav.cpp`), drag and drop with Live; SD-card slots as loop banks | Cloud plus your Mac | A Live clip dropped on a deck plays; a deck loop drags out as a clip |

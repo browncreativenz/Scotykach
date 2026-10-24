@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 /* The checks compare floats exactly on purpose; JUCE's warning flags would
@@ -18,6 +19,7 @@
 #include <juce_events/juce_events.h>
 
 #include "Check.h"
+#include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "ScotykachModule.h"
 #include "TestSignal.h"
@@ -246,6 +248,60 @@ void TestBypass()
     CHECK(at == 10 + lat, "the bypassed impulse should arrive at %d, came at %d", 10 + lat, at);
 }
 
+/** The window's pads, as reported: Alt, Play, record 10 s, Play again and
+ *  stop the input. The loop closes and plays; Play a third time stops the
+ *  overdub, and the loop holds. */
+void TestEditorPads()
+{
+    ScotykachAudioProcessor plugin;
+    PlayHead head;
+    head.playing = false;
+    plugin.setPlayHead(&head);
+    plugin.prepareToPlay(kRate, kBlock);
+    std::unique_ptr<juce::AudioProcessorEditor> ed(plugin.createEditor());
+    auto* editor = dynamic_cast<ScotykachEditor*>(ed.get());
+    CHECK(editor != nullptr, "the window should be the pads editor");
+    if (editor == nullptr) return;
+    auto& alt  = *editor->pad("alt");
+    auto& play = *editor->pad("a_play");
+
+    using DS = scotykach::Processor::DeckState;
+    std::vector<DS> seen;
+    auto click = [&](ScotykachEditor::Pad& pd) { pd.press(); pd.release(); };   // quicker than a block
+    const auto out = Run(plugin, head, 75.0, 10.5, [&](double t, juce::MidiBuffer&) {
+        auto at = [&](double when) { return t >= when && t < when + kBlock / (double)kRate; };
+        if (at(0.5))  { click(alt); click(play); }
+        if (at(1.0))  seen.push_back(plugin.core().deckStatus(0).state);
+        if (at(10.5)) click(play);
+        if (at(11.0)) seen.push_back(plugin.core().deckStatus(0).state);
+        if (at(12.0)) { click(play); click(alt); }
+        if (at(12.5)) seen.push_back(plugin.core().deckStatus(0).state);
+    });
+    // SCOTYKACH_SNAPSHOT=file.png saves the window as it looks now.
+    if (const char* path = std::getenv("SCOTYKACH_SNAPSHOT"))
+    {
+        editor->pad("a_grit")->press();
+        Run(plugin, head, 0.2, 0.0, [](double, juce::MidiBuffer&) {});
+        editor->refresh();
+        const auto image = editor->createComponentSnapshot(editor->getLocalBounds(), true, 2.f);
+        juce::File file(juce::File::getCurrentWorkingDirectory().getChildFile(path));
+        file.deleteFile();
+        juce::FileOutputStream stream(file);
+        juce::PNGImageFormat().writeImageToStream(image, stream);
+        editor->pad("a_grit")->release();
+    }
+
+    const auto st = plugin.core().deckStatus(0);
+    std::printf("  pads: states %d %d %d, loop %.2f s, rms 15-20 s %.3f, 70-75 s %.3f, alt %d\n",
+                (int)seen[0], (int)seen[1], (int)seen[2], st.seconds, Rms(out, 15, 20), Rms(out, 70, 75), alt.isOn());
+    CHECK(seen.size() == 3 && seen[0] == DS::Recording, "recording after Alt + Play (the input is playing)");
+    CHECK(seen.size() == 3 && seen[1] == DS::Overdubbing, "Play again closes the loop and overdubs");
+    CHECK(seen.size() == 3 && seen[2] == DS::Playing, "Play a third time stops the overdub");
+    CHECK(std::abs(st.seconds - 10.0) < 0.3, "a 10 s loop (%.2f s)", st.seconds);
+    CHECK(Rms(out, 15, 20) > 0.05 && Rms(out, 70, 75) > 0.95 * Rms(out, 15, 20), "the loop should hold its level");
+    CHECK(!alt.isOn(), "Alt latches: clicked twice, it is off");
+}
+
 } // namespace
 
 int main()
@@ -262,6 +318,7 @@ int main()
     TestMidiToHost();
     TestMono();
     TestBypass();
+    TestEditorPads();
     std::printf(test::Failures() ? "FAILED (%d)\n" : "ok\n", test::Failures());
     return test::Failures() != 0;
 }
