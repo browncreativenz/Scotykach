@@ -171,6 +171,48 @@ void TestNoteGate()
     CHECK(high >= 3 && high <= 5, "gate A high for %d blocks, expected about 7 ms", high);
 }
 
+/** A loop read out of one module and written into another comes back the
+ *  same, and plays. */
+void TestLoopRoundTrip()
+{
+    Module from;
+    RunModule(Loop("reel"), 512, from);
+    std::vector<float> loop(2 * Panel::maxLoopFrames());
+    const auto frames = from.control([&](Panel& p, Core&) { return p.readLoop(Deck::A, loop.data(), Panel::maxLoopFrames()); });
+    CHECK(frames > 90000, "a loop of %zu frames", frames);
+
+    for (const auto mode : { Mode::Reel, Mode::Slice })
+    {
+        Module to;
+        to.control([&](Panel& p, Core&) {
+            p.setMode(Deck::A, mode);
+            p.set(Deck::A, Panel::Control::Mix, 1.f);
+            p.set(Panel::Global::Crossfade, 0.f);
+        });
+        float zero[96] = {}, l[96], r[96];
+        to.process(zero, zero, l, r, 96);   // the mode switch lands
+        to.control([&](Panel& p, Core&) { p.writeLoop(Deck::A, loop.data(), frames); });
+
+        std::vector<float> back(2 * frames);
+        const auto got = to.control([&](Panel& p, Core&) { return p.readLoop(Deck::A, back.data(), frames); });
+        CHECK(got == frames && back == std::vector<float>(loop.begin(), loop.begin() + 2 * frames),
+              "the loop should read back as written");
+
+        to.control([](Panel& p, Core&) { p.pad(P::PlayA, true); p.pad(P::PlayA, false); });
+        double energy = 0;
+        for (int b = 0; b < 1500; ++b)   // 3 s
+        {
+            to.process(zero, zero, l, r, 96);
+            for (int i = 0; i < 96; ++i) energy += l[i] * l[i];
+        }
+        CHECK(energy > 100.0, "%s: the loaded loop should play (energy %.1f)", mode == Mode::Reel ? "Reel" : "Slice", energy);
+    }
+
+    Module empty;
+    empty.control([&](Panel& p, Core&) { p.writeLoop(Deck::A, loop.data(), frames); p.writeLoop(Deck::A, nullptr, 0); });
+    CHECK(empty.control([](Panel& p, Core&) { return p.loopFrames(Deck::A); }) == 0, "0 frames empties the deck");
+}
+
 } // namespace
 
 int main()
@@ -179,6 +221,7 @@ int main()
     TestSameAsEngine();
     TestPlayLed();
     TestNoteGate();
+    TestLoopRoundTrip();
     std::printf(test::Failures() ? "FAILED (%d)\n" : "ok\n", test::Failures());
     return test::Failures() != 0;
 }

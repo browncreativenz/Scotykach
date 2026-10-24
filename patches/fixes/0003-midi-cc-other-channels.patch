@@ -1,0 +1,16 @@
+diff --git a/src/ui/core.midi.cpp b/src/ui/core.midi.cpp
+index 0e75a4b..cf95572 100644
+--- a/src/ui/core.midi.cpp
++++ b/src/ui/core.midi.cpp
+@@ -112,6 +112,11 @@ void CoreMIDI::_process_cc(daisy::ControlChangeEvent& event)
+     auto& c = Config::dynamic();
+     if (event.channel == c.midi_channel(Deck::A)) ref = Deck::A;
+     else if (event.channel == c.midi_channel(Deck::B)) ref = Deck::B;
++    // Desktop (Scotykach): on any other channel ref stays Deck::Count, and
++    // the handlers below index deck(2), past the two decks, writing into
++    // the memory after them (on the module too). Only the crossfader,
++    // which belongs to no deck, works on every channel.
++    if (ref == Deck::Count && event.control_number != CC::CrossFade) return;
+     switch (event.control_number) {
+         case CC::RecExt: {
+             if (event.value > 0 && _on_record) _on_record(ref, false); 

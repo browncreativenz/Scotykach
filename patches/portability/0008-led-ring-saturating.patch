@@ -1,0 +1,44 @@
+diff --git a/src/ui/led.ring.cpp b/src/ui/led.ring.cpp
+index 1ea37bd..fec2197 100644
+--- a/src/ui/led.ring.cpp
++++ b/src/ui/led.ring.cpp
+@@ -17,7 +17,11 @@ inline void extrapolate(
+     float& b2, 
+     const bool reverse = false)
+ {
+-    p1 = static_cast<int32_t>(p);
++    // Desktop (Scotykach): ring positions can be far outside the ring (a
++    // loop shorter than the shortest slice). The module's VCVT saturates
++    // them; on x86 these conversions are undefined. arm_f2s32
++    // (shim/prelude.h) converts as the module, here and below.
++    p1 = arm_f2s32(p);
+     // Desktop (Scotykach): int32_t is long on the module's toolchain, so
+     // max(int32_t, long) compiles there but not where int32_t is int.
+     if (reverse) p2 = std::max<int32_t>(p1 - 1, 0);
+@@ -60,7 +64,7 @@ void LEDRing::set_segment(float norm_start, float norm_end, const bool sharp)
+     float sb1, sb2;
+     while (norm_start < 0) { norm_start += 1.f; }
+     if (sharp) {
+-        sp1 = sp2 = std::round(norm_start * kLEDCount);
++        sp1 = sp2 = arm_f2s32(std::round(norm_start * kLEDCount));
+         sb1 = sb2 = _segment_brightness;
+     }
+     else {
+@@ -71,7 +75,7 @@ void LEDRing::set_segment(float norm_start, float norm_end, const bool sharp)
+     float eb1, eb2;
+     while (norm_end < 0) { norm_end += 1.f; }
+     if (sharp) {
+-        ep1 = ep2 = std::round(norm_end * kLEDCount);
++        ep1 = ep2 = arm_f2s32(std::round(norm_end * kLEDCount));
+         eb1 = eb2 = _segment_brightness;
+     }
+     else {
+@@ -109,7 +113,7 @@ void LEDRing::add_point(float norm_position, const float brightness, const bool
+         norm_position += 1.f;
+     }
+     if (sharp) {
+-        _set(std::round(norm_position * kLEDCount), _point_color, brightness, over);
++        _set(static_cast<int8_t>(arm_f2s32(std::round(norm_position * kLEDCount))), _point_color, brightness, over);
+     } 
+     else {
+         extrapolate(norm_position * kUpperBound, brightness, p1, p2, b1, b2);

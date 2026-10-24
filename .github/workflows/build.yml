@@ -39,7 +39,7 @@ jobs:
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.flags }}
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DSCOTYKACH_BUILD_PLUGIN=OFF ${{ matrix.flags }}
 
       - name: Build
         run: cmake --build build --parallel
@@ -47,8 +47,45 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure --parallel 4
 
-  engine-macos:
-    name: Engine tests (macOS)
+      # More random seeds than the test suite runs: anything that hangs or
+      # trips a sanitizer here would hang or misbehave in a host.
+      - name: Stress
+        if: matrix.name == 'sanitizers'
+        run: timeout 1500 build/tests/stress_test 9 120
+
+  plugin-linux:
+    name: Plugin (Linux, pluginval)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: JUCE dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libasound2-dev libx11-dev libxext-dev libxinerama-dev \
+            libxrandr-dev libxcursor-dev libfreetype-dev libfontconfig1-dev libgl1-mesa-dev xvfb
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --parallel 4
+
+      - name: pluginval
+        run: |
+          curl -sSL -o pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip
+          unzip -q pluginval.zip
+          xvfb-run -a ./pluginval --strictness-level 10 --validate-in-process \
+            --validate build/plugin/Scotykach_artefacts/Release/VST3/Scotykach.vst3
+
+  plugin-macos:
+    name: Plugin (macOS)
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
@@ -56,7 +93,7 @@ jobs:
           submodules: true
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
 
       - name: Build
         run: cmake --build build --parallel "$(sysctl -n hw.ncpu)"
@@ -64,10 +101,37 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure --parallel 4
 
+      # The build installs the AU into ~/Library/Audio/Plug-Ins/Components.
+      - name: auval
+        run: |
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          auval -strict -v aumf Scty Brcn
+
+      - name: pluginval
+        run: |
+          curl -sSL -o pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
+          unzip -q pluginval.zip
+          for plugin in "$HOME/Library/Audio/Plug-Ins/VST3/Scotykach.vst3" \
+                        "$HOME/Library/Audio/Plug-Ins/Components/Scotykach.component"; do
+            pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process \
+              --validate "$plugin"
+          done
+
       - name: Demo render
         run: mkdir -p dist && build/scotykach_render dist/scotykach-demo.wav
 
+      # Ad-hoc signed only: after downloading, clear the quarantine flag with
+      #   xattr -dr com.apple.quarantine <bundle>
+      - name: Package
+        run: |
+          art=build/plugin/Scotykach_artefacts/Release
+          for bundle in "$art/VST3/Scotykach.vst3" "$art/AU/Scotykach.component" "$art/Standalone/Scotykach.app"; do
+            codesign --force --deep --sign - "$bundle"
+            ditto -c -k --keepParent "$bundle" "dist/$(basename "$bundle").zip"
+          done
+
       - uses: actions/upload-artifact@v6
         with:
-          name: Scotykach-demo
-          path: dist/scotykach-demo.wav
+          name: Scotykach-macOS
+          path: dist/

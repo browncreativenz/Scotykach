@@ -51,7 +51,7 @@ inline uint32_t arm_f2u32(float x)
 
 inline int32_t arm_f2s32(float x)
 {
-    if (x != x) return 0;                         // NaN
+    if (std::isnan(x)) return 0;
     if (x >= 2147483648.f) return 2147483647;
     if (x < -2147483648.f) return -2147483647 - 1;
     return (int32_t)x;

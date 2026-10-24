@@ -1,0 +1,18 @@
+diff --git a/src/core/generator.cpp b/src/core/generator.cpp
+index b88c7db..30bb60e 100644
+--- a/src/core/generator.cpp
++++ b/src/core/generator.cpp
+@@ -140,7 +140,12 @@ void Generator::apply_dimensions()
+   }
+   else if (_snap_to_cue) { /* slice mode */
+     _cue_size_delta = static_cast<uint8_t>(std::max(abs_size / _slice_size, 1.f));
+-    auto start_idx = static_cast<uint32_t>(std::round(norm_start * _auto_cue_max_idx) + _offset);
++    // Desktop (Scotykach): with a loop under two 16ths there are no slices,
++    // and _auto_cue_max_idx wraps to the largest size_t. On the module that
++    // is 0xFFFFFFFF (32 bits) and the conversion saturates; here size_t has
++    // 64 bits and the conversion would be undefined. Take 32 bits and
++    // convert as the module does (arm_f2u32, shim/prelude.h).
++    auto start_idx = arm_f2u32(std::round(norm_start * static_cast<uint32_t>(_auto_cue_max_idx)) + _offset);
+     // Desktop (Scotykach): with nothing recorded, auto_cue() was given no
+     // slices, so this is % 0. The Cortex-M7 doesn't trap on that (x % 0 is
+     // x); x86 does. arm_mod (shim/prelude.h) gives the module's result.

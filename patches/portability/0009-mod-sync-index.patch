@@ -1,0 +1,16 @@
+diff --git a/src/core/modulator.cpp b/src/core/modulator.cpp
+index 24885f8..68521c7 100644
+--- a/src/core/modulator.cpp
++++ b/src/core/modulator.cpp
+@@ -26,7 +26,10 @@ void Modulator::set_speed_norm(const float norm, const bool sync)
+     _is_synced = sync;
+     
+     if (sync) {
+-        auto ticks = kFreqDiv[std::clamp(1.f - norm, 0.f, 1.f) * kFreqDiv.size() - 1];
++        // Desktop (Scotykach): at norm 1 the index is -1.0. The module's VCVT
++        // makes that 0; on x86 it is undefined, and read past the table.
++        // arm_f2u32 (shim/prelude.h) converts as the module.
++        auto ticks = kFreqDiv[arm_f2u32(std::clamp(1.f - norm, 0.f, 1.f) * kFreqDiv.size() - 1)];
+         _freq_mult = 4.f / ticks;
+         _ticks_to_reset = std::max(1.f, ticks);
+     }

@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 #include "core/core.h"
@@ -110,6 +111,19 @@ class Panel
      *  alone (for following the host's tempo while its transport is
      *  stopped). Held to the firmware's 20..250 BPM. */
     void setInternalTempo(float bpm);
+
+    /** A deck's recorded loop, in frames (0 when empty). */
+    std::size_t loopFrames(Deck::Ref) const;
+    /** The most a deck holds: 42 s at 48 kHz. */
+    static std::size_t maxLoopFrames();
+    /** Copies up to maxFrames of the loop out, interleaved L R; returns how
+     *  many. */
+    std::size_t readLoop(Deck::Ref, float* interleaved, std::size_t maxFrames) const;
+    /** Replaces the deck's loop, as the firmware does when it loads one
+     *  from the SD card (DeckStorage::load and process): the deck stops,
+     *  cue points clear, the audio goes in, the loop length is set, and in
+     *  Slice mode the grid is made again. 0 frames empties the deck. */
+    void writeLoop(Deck::Ref, const float* interleaved, std::size_t frames);
 
     /** Runs the LED start-up animation to its end, so CoreUI takes its
      *  factory values at the next block instead of after about 3 s. */

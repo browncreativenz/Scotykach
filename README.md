@@ -6,9 +6,11 @@ a two-deck looping and granular instrument.
 
 ## Status
 
-Milestones S0 and S1 of [the plan](docs/PLAN.md) are done: the whole
-firmware (v1.3.1), its audio engine and its own UI code, runs on a desktop
-behind a plugin-ready processor. There is no plugin yet; that is S2 (JUCE).
+Milestones S0 to S2 of [the plan](docs/PLAN.md) are done: the whole
+firmware (v1.3.1), its audio engine and its own UI code, runs as a VST3, AU
+and Standalone plugin. It passes `pluginval` at its strictest level and
+`auval`. The window is JUCE's generic one for now (a panel-style window is
+S4); trying it in Live on a Mac is next.
 
 - Reel, Slice and Drift record and loop, played with the module's own
   gestures: Alt+Play records, Alt+Seq arms the sequencer and holding Seq
@@ -16,15 +18,17 @@ behind a plugin-ready processor. There is no plugin yet; that is S2 (JUCE).
   tempo.
 - Every pot control is its own parameter (70 in all, `scotykach_render
   --list`), including the ones the module reaches by holding a button.
-- The clock follows a host transport: Slice mode records and loops on the
-  host's beats, and locks to its bars.
-- Any sample rate (44.1 to 96 kHz tested), any block size, several
-  instances in one process, MIDI notes and CCs at their exact sample.
+- The clock follows Live: Slice mode records and loops on Live's beats,
+  and locks to its bars.
+- A saved set reopens with both decks' loops, at full quality.
+- Any sample rate (44.1 to 96 kHz tested), any buffer size, several
+  instances, MIDI notes and CCs at their exact sample.
 - The firmware is built from a patched copy; the submodule itself is never
   edited. The [patches](docs/PLAN.md#firmware-patches) make x86 behave as
-  the module's processor does where the two differ, let instances share a
-  process, and give the plugin its one hook into the UI. With its UI, the
-  firmware gives exactly the samples its engine alone gives.
+  the module's processor does where the two differ, fix three firmware bugs
+  that automation can reach (a frozen LED loop, two of them; a MIDI CC
+  writing past the decks), let instances share a process, and give the
+  plugin its one hook into the UI.
 
 ## Build
 
@@ -33,13 +37,66 @@ on macOS) and `patch`.
 
 ```sh
 git submodule update --init external/spotykach external/DaisySP   # first checkout only
-cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake -B build -DCMAKE_BUILD_TYPE=Release                         # fetches JUCE 8.0.16 the first time
 cmake --build build --parallel
 ctest --test-dir build
 ```
 
-Add `-DSCOTYKACH_SANITIZE=ON` to run the tests under AddressSanitizer and
-UndefinedBehaviorSanitizer, as CI does.
+The build installs the plugin for your user: on macOS the VST3 into
+`~/Library/Audio/Plug-Ins/VST3` and the AU into
+`~/Library/Audio/Plug-Ins/Components`. The Standalone app is in
+`build/plugin/Scotykach_artefacts/Release/Standalone`.
+
+- To use a JUCE checkout you already have, add
+  `-DFETCHCONTENT_SOURCE_DIR_JUCE=/path/to/JUCE`.
+- To build only the firmware, renderer and tests, without JUCE, add
+  `-DSCOTYKACH_BUILD_PLUGIN=OFF`.
+- `-DSCOTYKACH_SANITIZE=ON` runs the tests under AddressSanitizer and
+  UndefinedBehaviorSanitizer, as CI does.
+- On Linux, JUCE needs the ALSA, X11 (with Xext, Xinerama, Xrandr,
+  Xcursor), FreeType, fontconfig and OpenGL development packages.
+
+Or skip building: every push runs the **Build** workflow on GitHub Actions,
+and its run page has a `Scotykach-macOS` download with the VST3, AU and
+Standalone app. Those are signed ad hoc, so after unzipping, clear the
+quarantine flag before Live will load them:
+
+```sh
+xattr -dr com.apple.quarantine Scotykach.vst3   # likewise Scotykach.component, Scotykach.app
+```
+
+## Using it in Live
+
+After installing, rescan plug-ins (Settings > Plug-Ins > Rescan). Scotykach
+is under Plug-Ins, by browncreativenz, as a VST3 and an AU. Put it on an
+audio track: that track's audio is what the decks record.
+
+- **Recording:** hold **Alt** and press **A Play** (or B): the deck arms,
+  and recording starts at the next sound (Reel, Drift) or the next beat
+  (Slice). Do it again to close the loop; it plays on, overdubbing. **A
+  Play** alone starts and stops it, **A Rev** plays it backwards.
+- **Pads and buttons are parameters** (A Play, A Rev, A Grit, A Flux,
+  A Seq, likewise B, Spot, Alt, Tap). They are held while on. MIDI-map them
+  to a pad controller with Cmd-M, so you can hold Alt and press Play as on
+  the module.
+- **Every knob, layers included,** is its own parameter: A Feedback (SOS
+  with Alt), A Grit Mix (SOS with Grit held), Tempo (Mod Freq with Tap
+  held) and so on. Each automates and maps on its own.
+- **Clock:** *Live* (the default) follows Live's tempo and transport;
+  Slice mode's loops and quantised recording lock to Live's bars from the
+  first bar line after you press Play in Live. While Live is stopped the
+  module runs at Live's tempo on its own clock. *Internal* uses the Tempo
+  parameter and Tap.
+- **MIDI:** on a MIDI track, set MIDI To to the track holding Scotykach.
+  Notes on channel 1 trigger deck A, channel 2 deck B, at their pitch
+  (middle C plays at 1x). The module's CC map works too: CC 14 records,
+  CC 85/86 play forward/reverse, CC 20–28 the deck controls, CC 102–109 the
+  FX, CC 3 the crossfader.
+- **Saving:** a set saves both loops at full quality (up to about 32 MB per
+  instance) and reopens with them, stopped, as the module is after loading
+  a loop; press Play.
+- Latency is reported to Live, which compensates for it: 2 ms at 48 kHz,
+  about 5 ms at 44.1 or 96 kHz.
 
 ## Render audio from the command line
 
@@ -70,14 +127,16 @@ for the clock to follow. Input can be any sample rate.
   (the hardware, replaced whole); `ScotykachModule`, the firmware as its
   `app.cpp` runs it; `ScotykachPanel`, the controls into it;
   `ScotykachParams`, the parameter table; `ScotykachProcessor`, what the
-  plugin will wrap; `ScotykachEngine`, the engine alone, for tests.
+  plugin wraps; `ScotykachEngine`, the engine alone, for tests.
 - `tools/` — the renderer, the host rig it shares with the tests.
-- `tests/` — engine, module, processor, parameter and resampler tests.
+- `plugin/` — the JUCE plugin.
+- `tests/` — engine, module, processor, parameter, resampler, stress and
+  plugin tests.
 - `docs/PLAN.md` — the build plan and milestones.
 
 ## Licence
 
 MIT (see [LICENSE](LICENSE)). The Spotykach firmware is MIT, copyright
-Synthux Academy; DaisySP is MIT, copyright Electrosmith. The plugin will
-use JUCE under its AGPLv3 licence, so a built plugin given to anyone else
-would fall under the AGPL.
+Synthux Academy; DaisySP is MIT, copyright Electrosmith. The plugin uses
+JUCE under its AGPLv3 licence, so a built plugin given to anyone else would
+fall under the AGPL.

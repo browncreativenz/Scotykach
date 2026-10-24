@@ -1,0 +1,19 @@
+diff --git a/src/core/phasor.h b/src/core/phasor.h
+index 73ba24a..2d8936e 100644
+--- a/src/core/phasor.h
++++ b/src/core/phasor.h
+@@ -52,8 +52,12 @@ private:
+         // Split first so both conversions stay 32 bit (hardware VCVT, no libcall)
+         auto i = std::floor(f);
+         auto frac = f - i; // exact, in [0, 1)
+-        return static_cast<int64_t>(static_cast<int32_t>(i)) * kOne
+-             + static_cast<int64_t>(static_cast<uint32_t>(frac * 4294967296.f)); // 2^32, i.e. uint32_t max
++        // Desktop (Scotykach): the module's VCVT saturates out-of-range
++        // values (a voice start far past the buffer, or frac * 2^32
++        // rounding up to 2^32); on x86 those conversions are undefined.
++        // arm_f2s32 and arm_f2u32 (shim/prelude.h) convert as the module.
++        return static_cast<int64_t>(arm_f2s32(i)) * kOne
++             + static_cast<int64_t>(arm_f2u32(frac * 4294967296.f)); // 2^32, i.e. uint32_t max
+     }
+ 
+     int64_t _v;

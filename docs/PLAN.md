@@ -82,11 +82,12 @@ are fixed with small patches (below), not by editing the submodule.
 ## Architecture
 
 ```
-CMakeLists.txt              top level (S2 adds JUCE 8.0.16-security)
+CMakeLists.txt              top level; fetches JUCE 8.0.16-security for the plugin
 cmake/Firmware.cmake        patched copies of the firmware, DaisySP, the libraries
 external/spotykach/         submodule, v1.3.1 (never edited)
 external/DaisySP/           submodule, at the firmware's pinned commit
 patches/portability/        make x86 behave as the module's Cortex-M7 does
+patches/fixes/              firmware bugs a plugin's automation can reach
 patches/instances/          let several modules share one process
 patches/plugin/             the one hook the plugin needs into CoreUI
 core/                       desktop side, plain C++17, no JUCE
@@ -102,10 +103,11 @@ core/                       desktop side, plain C++17, no JUCE
   ScotykachParams           the 70 plugin parameters: IDs, kinds, defaults
   ScotykachProcessor        host-facing: rate bridge, parameters, MIDI, Live's clock
   Resampler.h, RateBridge.h host rate <-> 48 kHz, copied from Granular-plugin
-plugin/                     JUCE AudioProcessor and editor                      (S2)
+plugin/                     the JUCE plugin: parameters, transport, MIDI, state
 tools/HostRig.h             drives a Processor as a host would
 tools/render/               scotykach_render: the processor, scripted, WAV in and out
-tests/                      engine, module, processor, parameter and resampler tests
+tests/                      engine, module, processor, parameter, resampler,
+                            stress and plugin tests
 .github/workflows/          CI: Linux GCC, Clang and sanitizers; macOS
 ```
 
@@ -130,9 +132,23 @@ configuring stops and names it. Each changed line carries a
 | `portability/0003-arm-float-to-int` | Overdubbing at exactly 1x divides by zero in the write-head skip, and the empty-buffer playhead is 0/0. The module converts inf and NaN to integers by saturating (inf to 0xFFFFFFFF, NaN to 0); GCC and Clang on x86-64 each give other values, which took the other branch. `arm_f2u32()` and `arm_f2s32()` convert as the module does |
 | `portability/0004-clang-array` | `Flux::switch_mode` initialises a variable-length array, a GCC extension Clang rejects. A `constexpr` count gives the same array |
 | `portability/0005-int32-max` | `LEDRing` calls `std::max(int32_t, long)`, which compiles only where `int32_t` is `long`, as on the module's toolchain |
+| `portability/0006-empty-slice-grid` | A Slice loop under two 16ths has no slices, and `_auto_cue_max_idx` wraps to the largest `size_t`: 0xFFFFFFFF on the module, 2^64 - 1 here, which made the next conversion undefined. Takes 32 bits and converts as the module |
+| `portability/0007-phasor-saturating` | `Phasor`, the voices' fixed-point playhead, converts float to int counting on the module's saturating `VCVT` (its own comment says so); far-out positions were undefined here |
+| `portability/0008-led-ring-saturating` | The LED ring converts ring positions to integers the same way; positions far outside the ring were undefined here |
+| `portability/0009-mod-sync-index` | With Alt held, Mod Speed at 1 indexes the sync table at -1.0, which the module converts to 0 and x86 to an index past the table |
+| `fixes/0001-led-ring-long-segment` | A loop shorter than the shortest slice (1344 samples) makes the ring's segment several rings long; from 128 LEDs on, an `int8_t` loop counter can never reach the end and the main loop freezes. Stops at one ring, which lights the LEDs exactly as before |
+| `fixes/0002-led-ring-negative-position` | The ring wraps negative positions by adding 1 until positive, which never ends once a position is so negative that adding 1 changes nothing (a voice in a loop a few samples long). Subtracting the floor gives the same result and ends |
+| `fixes/0003-midi-cc-other-channels` | A CC on a channel neither deck listens on indexed `deck(2)`, past the two decks, and wrote into the memory after them. Deck CCs on other channels are ignored now; the crossfader, which belongs to no deck, still works on every channel |
 | `instances/0001-per-instance-buffer-tables` | `Core::init` kept its buffer tables in function statics, so a second engine in the process wrote into the first one's loops (and `Detector` keeps the table's address). They become `Core` members |
 | `instances/0002-ui-statics` | `CoreUI` kept six values in statics: the Tap switch's state and its throttle, the MIDI clock edge, and three LED animation counters. Shared, one instance's MIDI clocks reached another (the instance test catches it). They become `CoreUI` members |
 | `plugin/0001-panel-access` | Declares `scotykach::Panel` a friend of `CoreUI`, so each parameter can set its value as `CoreUI::_on_midi_cc` does |
+
+The `fixes/` patches are firmware bugs, not desktop differences: the module
+would freeze or corrupt memory the same way. All three need input no hand
+gives a module (two record presses a few milliseconds apart, a CC on a
+third channel), but a plugin's automation, MIDI or validator gives it
+easily: `pluginval` hung on the first, and the stress test below found the
+rest. They are worth reporting to Synthux.
 
 One static is left shared, on purpose: `DeckStorage::process` keeps an SD
 card error flag, which can never be set without a card. `Config::dynamic()`
@@ -142,8 +158,8 @@ defaults, since there is no card to read it from.
 DaisySP and the firmware also build with `-fwrapv`: DaisySP's `WhiteNoise`
 relies on signed overflow wrapping, as it does on the module.
 
-`scotykach_fw_single` is the firmware with the portability patches only:
-the closest the desktop gets to the module. The `same_as_firmware_*` tests
+`scotykach_fw_single` is the firmware with the portability and fix patches
+only: the closest the desktop gets to the module. The `same_as_firmware_*` tests
 render every scenario through it and through the full build (one per
 process, since unpatched it supports only one engine) and require the same
 bytes, so the instance patch provably changes nothing about the sound.
@@ -189,6 +205,18 @@ reports nothing.
 - **Boot.** The LED start-up animation (about 3.3 s at the module's 125 Hz
   LED rate) is run to its end when the module is created, then CoreUI takes
   its factory values, so the plugin is playable at once.
+
+### What S2 found
+
+- **Randomised input finds what playing doesn't.** `pluginval`'s
+  parameter thread-safety test sets every parameter at random before each
+  block (pads and switches included) and hung on the LED ring. The new
+  stress test does the same with random MIDI and a jumping transport; under
+  the sanitizers it found the other two fixes and four more ARM-versus-x86
+  conversions (0006 to 0009). After them, 240 seeds run clean, and CI runs
+  120 under the sanitizers on every push.
+- **The plugin passes `pluginval` at its strictest level (10)**, editor
+  tests included, on Linux (CI runs it there and on macOS, with `auval`).
 
 ### Timing: one firmware "tick" per 96 samples
 
@@ -307,7 +335,7 @@ host block there.
 |---|---|---|---|
 | S0 ✅ | Submodules; patches; `shim/` with heap pool and sample clock; firmware `src/core` built into `scotykach_fw`; `ScotykachEngine`; `scotykach_render` with scripted actions; CTest scenarios; CI on Linux (GCC, Clang, sanitizers) and macOS | Cloud session | Reel, Slice and Drift record and loop; output is identical whatever the host block size; engines are independent in one process; the instance patch changes no output; no sanitizer reports |
 | S1 ✅ | Desktop `Hardware` (overlay); firmware `CoreUI`, `CoreMIDI`, `Storage` and `Settings` running, with patches for the UI's statics and the panel hook; `ScotykachModule`, `ScotykachPanel`, the parameter table; `ScotykachProcessor` with rate bridge, MIDI at sample offsets and Live clock sync; the renderer on the processor | Cloud session | The module matches the engine alone; gestures work (Alt+Play record, hold to clear, Grit hold and lock, tap tempo, Pitch quantise, Size fits tempo); Slice locks to a simulated host transport; 44.1–96 kHz; block-size independent; instances independent; no sanitizer reports |
-| S2 | JUCE plugin with generic controls; pads as buttons and MIDI notes; state save and load including recorded loops; macOS CI with `auval` and `pluginval` | Cloud session, then your Mac | Loads in Live, records and loops in time with Live's tempo, and a saved set reopens with its loops |
+| S2 ✅ | JUCE plugin (VST3, AU, Standalone) with the generic editor; the 70 parameters, with firmware changes sent back to the host; the host's playhead as the transport; MIDI in at its sample; state with both loops at full quality; latency-matched bypass; the stress test and three firmware fixes; CI with `auval` and `pluginval` on macOS, `pluginval` on Linux | Cloud session; your Mac for Live | `pluginval` strictness 10 and `auval` pass; plugin tests pass (record with the pads, the clock on the host's tempo, MIDI CC back to the host, state round trip with the loop, mono input, bypass). In Live: still to try on your Mac |
 | S3 | Gate outs, LFO outs and clock out as MIDI on a "Scotykach 1" virtual port, using the MIDI-out code copied from Capicola | Cloud plus your Mac | Gate notes play a Drum Rack; LFO CCs MIDI-map in Live |
 | S4 | The plugin window, from a mockup you approve first: 12 pads, two 32-LED rings drawn from the firmware's own LED output, pots, switches, crossfader | Cloud session builds it and renders screenshots; your Mac for feel | Looks like the mockup, and the LEDs match the module |
 | S5 (optional) | WAV import and export of loops (the firmware has `memory/wav.cpp`), drag and drop with Live; SD-card slots as loop banks | Cloud plus your Mac | A Live clip dropped on a deck plays; a deck loop drags out as a clip |
@@ -316,8 +344,12 @@ host block there.
 
 - **Set size.** Loops are saved at full quality (decided): each deck holds
   up to 42 s of stereo audio, about 16 MB as floats, so a Live set grows by
-  up to about 32 MB per instance, by less for shorter loops. Live may be
-  slower to save such sets; S2 checks how it copes.
+  up to about 32 MB per instance, by less for shorter loops (a 2 s loop is
+  0.73 MB). How Live copes with the biggest is to check on your Mac.
+- **Saving while overdubbing.** The plugin copies the loops for Live's save
+  while the audio thread may still be overdubbing them, so a save mid-pass
+  can catch a block of that pass. Stopping the audio for the copy would be
+  heard; loading, by contrast, pauses processing for the moment it takes.
 - **Pads and a mouse.** Many gestures press two pads at once: Alt plus a
   pad, holding Play, Seq combinations. With a mouse that means a latching Alt
   and Shift in the window. A pad controller MIDI-mapped to the button

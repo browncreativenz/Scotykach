@@ -7,6 +7,7 @@
 
 #include <algorithm>
 
+#include "hw/buffer.sdram.h"
 #include "ui/core.ui.h"
 
 namespace scotykach {
@@ -282,6 +283,42 @@ void Panel::setInternalTempo(float bpm)
 {
     // Tempo::set_norm clamps to the firmware's range.
     core.driver().set_tempo_norm(Tempo::abs_to_norm(bpm));
+}
+
+// ── Loops ───────────────────────────────────────────────────────────────────
+
+std::size_t Panel::loopFrames(Deck::Ref ref) const { return core.deck(ref).buffer().rec_size(); }
+
+std::size_t Panel::maxLoopFrames() { return SDRAMBuffer::kSourceBufferLength; }
+
+std::size_t Panel::readLoop(Deck::Ref ref, float* out, std::size_t maxFrames) const
+{
+    auto&       buf    = core.deck(ref).buffer();
+    const auto  frames = std::min({ buf.rec_size(), buf.size(), maxFrames });
+    const auto* raw    = buf.raw();
+    for (std::size_t i = 0; i < frames; ++i)
+    {
+        out[2 * i]     = raw[i].l;
+        out[2 * i + 1] = raw[i].r;
+    }
+    return frames;
+}
+
+void Panel::writeLoop(Deck::Ref ref, const float* in, std::size_t frames)
+{
+    auto& deck = core.deck(ref);
+    auto& buf  = deck.buffer();
+    deck.stop();
+    deck.disarm();
+    buf.clear();
+    frames = std::min(frames, buf.size());
+    if (frames == 0) return;
+
+    deck.voxs().clear_cue();
+    auto* raw = buf.raw();
+    for (std::size_t i = 0; i < frames; ++i) raw[i] = { in[2 * i], in[2 * i + 1] };
+    buf.set_rec_size(frames);
+    if (deck.mode() == Mode::Slice) deck.make_grid();
 }
 
 void Panel::finishBoot()

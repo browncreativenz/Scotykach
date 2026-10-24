@@ -5,6 +5,8 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
 project(Scotykach VERSION 0.1.0 LANGUAGES C CXX)
 
+option(SCOTYKACH_BUILD_PLUGIN "Build the JUCE plugin (fetches JUCE)" ON)
+option(SCOTYKACH_COPY_PLUGIN  "Install the plugin into the user plug-in folders after building" ON)
 option(SCOTYKACH_BUILD_TESTS "Build the engine tests"         ON)
 option(SCOTYKACH_BUILD_TOOLS "Build the command-line renderer" ON)
 option(SCOTYKACH_SANITIZE    "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
@@ -12,6 +14,8 @@ option(SCOTYKACH_SANITIZE    "Build with AddressSanitizer and UndefinedBehaviorS
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# The libraries are linked into the plugin's shared module.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -53,5 +57,21 @@ endif()
 
 if(SCOTYKACH_BUILD_TESTS)
     enable_testing()
+endif()
+
+if(SCOTYKACH_BUILD_PLUGIN)
+    # JUCE 8 (AGPLv3 for open-source use). To build against a JUCE checkout you
+    # already have, pass -DFETCHCONTENT_SOURCE_DIR_JUCE=/path/to/JUCE.
+    include(FetchContent)
+    FetchContent_Declare(JUCE
+        GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+        GIT_TAG        8.0.16-security
+        GIT_SHALLOW    TRUE)
+    FetchContent_MakeAvailable(JUCE)
+    add_subdirectory(plugin)
+endif()
+
+# After the plugin, so the tests can use its target when it is built.
+if(SCOTYKACH_BUILD_TESTS)
     add_subdirectory(tests)
 endif()

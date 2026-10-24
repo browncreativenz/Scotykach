@@ -1,0 +1,37 @@
+diff --git a/src/ui/led.ring.cpp b/src/ui/led.ring.cpp
+index e90e906..823e3fb 100644
+--- a/src/ui/led.ring.cpp
++++ b/src/ui/led.ring.cpp
+@@ -62,7 +62,11 @@ void LEDRing::set_segment(float norm_start, float norm_end, const bool sharp)
+ {
+     int32_t sp1, sp2;
+     float sb1, sb2;
+-    while (norm_start < 0) { norm_start += 1.f; }
++    // Desktop (Scotykach): adding 1 until the position is positive never
++    // ends once it is so negative that adding 1 changes nothing (a voice
++    // in a loop a few samples long; on the module too). Subtracting the
++    // floor gives the same result and always ends.
++    if (norm_start < 0) norm_start -= std::floor(norm_start);
+     if (sharp) {
+         sp1 = sp2 = arm_f2s32(std::round(norm_start * kLEDCount));
+         sb1 = sb2 = _segment_brightness;
+@@ -73,7 +77,7 @@ void LEDRing::set_segment(float norm_start, float norm_end, const bool sharp)
+ 
+     int32_t ep1, ep2;
+     float eb1, eb2;
+-    while (norm_end < 0) { norm_end += 1.f; }
++    if (norm_end < 0) norm_end -= std::floor(norm_end);
+     if (sharp) {
+         ep1 = ep2 = arm_f2s32(std::round(norm_end * kLEDCount));
+         eb1 = eb2 = _segment_brightness;
+@@ -115,9 +119,7 @@ void LEDRing::add_point(float norm_position, const float brightness, const bool
+ {
+     int32_t p1, p2;
+     float b1, b2;      
+-    while (norm_position < 0) {
+-        norm_position += 1.f;
+-    }
++    if (norm_position < 0) norm_position -= std::floor(norm_position);   // Desktop (Scotykach): see set_segment
+     if (sharp) {
+         _set(static_cast<int8_t>(arm_f2s32(std::round(norm_position * kLEDCount))), _point_color, brightness, over);
+     } 

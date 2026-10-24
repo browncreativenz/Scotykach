@@ -72,3 +72,22 @@ add_test(NAME module COMMAND module_test)
 # The parameter table against the booted firmware.
 scotykach_test(params_test params_test.cpp)
 add_test(NAME params COMMAND params_test)
+
+# The JUCE plugin as a host drives it, when the plugin is being built. Uses
+# the plugin's shared-code library with its include paths and definitions.
+if(TARGET Scotykach)
+    add_executable(plugin_test plugin_test.cpp)
+    target_include_directories(plugin_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/plugin"
+        "${CMAKE_SOURCE_DIR}/tools"
+        $<TARGET_PROPERTY:Scotykach,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(plugin_test PRIVATE
+        $<TARGET_PROPERTY:Scotykach,COMPILE_DEFINITIONS>)
+    target_link_libraries(plugin_test PRIVATE Scotykach scotykach_fw)
+    add_test(NAME plugin COMMAND plugin_test)
+endif()
+
+# Every parameter, MIDI and the transport at random: nothing may hang.
+scotykach_test(stress_test stress_test.cpp)
+add_test(NAME stress COMMAND stress_test)
+set_tests_properties(stress PROPERTIES TIMEOUT 300)

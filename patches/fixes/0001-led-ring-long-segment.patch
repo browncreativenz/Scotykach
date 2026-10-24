@@ -1,0 +1,17 @@
+diff --git a/src/ui/led.ring.cpp b/src/ui/led.ring.cpp
+index 1ea37bd..2e576ec 100644
+--- a/src/ui/led.ring.cpp
++++ b/src/ui/led.ring.cpp
+@@ -89,6 +89,12 @@ void LEDRing::set_segment(float norm_start, float norm_end, const bool sharp)
+         auto e = ep1;
+         while (s > kUpperBound) { s -= kUpperBound; }
+         auto l = e < s ? kUpperBound - s + e : e - s;
++        // Desktop (Scotykach): a loop shorter than the shortest slice makes
++        // the segment several rings long; from 128 LEDs on, the int8_t idx
++        // below can never reach l and the main loop freezes (on the module
++        // too). Every l from 32 up lights each LED the same way, so stop at
++        // one ring.
++        l = std::min<decltype(l)>(l, kLEDCount);
+ 
+         for (int8_t idx = 0; idx < l; idx ++) {
+             auto p = idx + s + 1;

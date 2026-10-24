@@ -7,6 +7,8 @@
 #
 #   patches/portability/  make the firmware behave on x86 as it does on the
 #                         module's Cortex-M7, where the two differ
+#   patches/fixes/        firmware bugs that would bite on the module too,
+#                         and that a plugin's automation can reach
 #   patches/instances/    let several engines share one process, as plugin
 #                         instances in Live do
 #   patches/plugin/       hooks the plugin needs into the firmware's UI
@@ -21,8 +23,8 @@
 #   scotykach_fw            the firmware (engine, UI, storage) with all
 #                           patches, the shim, ScotykachEngine and
 #                           ScotykachModule: what the plugin uses
-#   scotykach_fw_single     the engine alone with only the portability
-#                           patches: the firmware as it runs on the module,
+#   scotykach_fw_single     the engine alone with only the portability and
+#                           fix patches: the firmware as it runs on the module,
 #                           for the test that the instance patches don't
 #                           change the sound. One engine per process only.
 
@@ -41,9 +43,11 @@ target_compile_options(daisysp PRIVATE ${SCOTYKACH_FIRMWARE_FLAGS} -w)
 
 # ── Patched copies of the firmware sources ──────────────────────────────────
 file(GLOB PORTABILITY_PATCHES "${CMAKE_SOURCE_DIR}/patches/portability/*.patch")
+file(GLOB FIX_PATCHES         "${CMAKE_SOURCE_DIR}/patches/fixes/*.patch")
 file(GLOB INSTANCE_PATCHES    "${CMAKE_SOURCE_DIR}/patches/instances/*.patch")
 file(GLOB PLUGIN_PATCHES      "${CMAKE_SOURCE_DIR}/patches/plugin/*.patch")
 list(SORT PORTABILITY_PATCHES)
+list(SORT FIX_PATCHES)
 list(SORT INSTANCE_PATCHES)
 list(SORT PLUGIN_PATCHES)
 set(SCOTYKACH_SHIM_DIR    "${CMAKE_SOURCE_DIR}/core/shim")
@@ -53,7 +57,7 @@ list(TRANSFORM HW_OVERLAY PREPEND "${SCOTYKACH_OVERLAY_DIR}/hw/" OUTPUT_VARIABLE
 file(GLOB_RECURSE FW_ALL_FILES RELATIVE "${SPOTYKACH_DIR}" "${SPOTYKACH_DIR}/src/*")
 list(TRANSFORM FW_ALL_FILES PREPEND "${SPOTYKACH_DIR}/" OUTPUT_VARIABLE FW_ALL_PATHS)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    ${PORTABILITY_PATCHES} ${INSTANCE_PATCHES} ${PLUGIN_PATCHES} ${FW_ALL_PATHS}
+    ${PORTABILITY_PATCHES} ${FIX_PATCHES} ${INSTANCE_PATCHES} ${PLUGIN_PATCHES} ${FW_ALL_PATHS}
     ${HW_OVERLAY_PATHS})
 
 find_program(PATCH_EXECUTABLE patch)
@@ -92,9 +96,9 @@ function(scotykach_patched_copy dest)
 endfunction()
 
 scotykach_patched_copy("${CMAKE_BINARY_DIR}/firmware"
-    ${PORTABILITY_PATCHES} ${INSTANCE_PATCHES} ${PLUGIN_PATCHES})
+    ${PORTABILITY_PATCHES} ${FIX_PATCHES} ${INSTANCE_PATCHES} ${PLUGIN_PATCHES})
 scotykach_patched_copy("${CMAKE_BINARY_DIR}/firmware-single"
-    ${PORTABILITY_PATCHES})
+    ${PORTABILITY_PATCHES} ${FIX_PATCHES})
 
 # The parameter table: plain C++, no firmware headers, for the plugin too.
 add_library(scotykach_params STATIC "${CMAKE_SOURCE_DIR}/core/ScotykachParams.cpp")
@@ -128,8 +132,9 @@ function(scotykach_firmware_library name src_root with_ui)
         "${SCOTYKACH_SHIM_DIR}"
         "${CMAKE_SOURCE_DIR}/core")
     target_include_directories(${name} SYSTEM PUBLIC "${src_root}")
+    # C++ only: hosts of these headers (the plugin) also compile C sources.
     target_compile_options(${name} PUBLIC
-        "SHELL:-include \"${SCOTYKACH_SHIM_DIR}/prelude.h\"")
+        "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include \"${SCOTYKACH_SHIM_DIR}/prelude.h\">")
     target_compile_options(${name} PRIVATE ${SCOTYKACH_FP_FLAGS})
     target_link_libraries(${name} PUBLIC daisysp)
     if(with_ui)
